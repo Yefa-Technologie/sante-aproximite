@@ -1,21 +1,27 @@
 import * as Device from "expo-device";
 import Constants from "expo-constants";
-import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
 import { apiFetch } from "./api/client";
 
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-  }),
-});
+// Les notifications push distantes ne sont plus supportees dans Expo Go depuis le SDK 53
+// (necessite un development build). Le simple fait d'importer expo-notifications declenche
+// un console.error interne dans ce contexte : on evite donc de charger le module tant qu'on
+// n'est pas certain de ne pas etre dans Expo Go.
+const isExpoGo = Constants.appOwnership === "expo" || Constants.executionEnvironment === "storeClient";
 
 export async function registerForPushNotifications(token) {
-  if (!token || !Device.isDevice) return;
+  if (!token || !Device.isDevice || isExpoGo) return;
 
   try {
+    const Notifications = require("expo-notifications");
+    Notifications.setNotificationHandler({
+      handleNotification: async () => ({
+        shouldShowAlert: true,
+        shouldPlaySound: true,
+        shouldSetBadge: false,
+      }),
+    });
+
     const existing = await Notifications.getPermissionsAsync();
     let status = existing.status;
     if (status !== "granted") {
@@ -33,10 +39,6 @@ export async function registerForPushNotifications(token) {
 
     const projectId = Constants.expoConfig?.extra?.eas?.projectId;
     if (!projectId) return;
-
-    // Les notifications push distantes ne sont plus supportees dans Expo Go depuis le SDK 53
-    // (necessite un development build). getExpoPushTokenAsync loggerait une erreur non interceptable.
-    if (Constants.appOwnership === "expo" || Constants.executionEnvironment === "storeClient") return;
 
     const pushToken = await Notifications.getExpoPushTokenAsync({ projectId });
     if (!pushToken?.data) return;

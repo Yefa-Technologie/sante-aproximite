@@ -79,11 +79,8 @@ export function Root() {
   const hasRole = (roleName) => normalizedRoles.includes(roleName);
   const hasAnyRole = (roleNames) => roleNames.some((roleName) => hasRole(roleName));
   const canManageCenters = hasAnyRole(["CHEF_ETABLISSEMENT", "ETABLISSEMENT"]);
-  const canManageCenterSettings = hasAnyRole(["REGULATOR", "NATIONAL", "REGION", "DISTRICT"]) || canManageCenters;
   const chefHasPendingOrMissingCenter =
     canManageCenters && (!chefCenterApprovalStatus || chefCenterApprovalStatus === "PENDING");
-  const isEmergencyResponder  = hasAnyRole(["SAMU", "SAPEUR_POMPIER", "SAPPEUR_POMPIER", "PROTECTION_CIVILE"]);
-  const isSecurityResponder   = hasAnyRole(["POLICE", "GENDARMERIE"]);
   const hasStandardMobileRole = hasAnyRole(["USER", "UTILISATEUR", "PATIENT"]);
 
   const userRoleGroups = [
@@ -108,11 +105,11 @@ export function Root() {
   const canUseSuggestions     = isModuleEnabled("suggestions");
   const canSendEmergencyRequest = isModuleEnabled("emergency");
   const canSendSecurityAlert  = isModuleEnabled("security_alert");
-  const canUseReferralModule = (canManageCenters || isEmergencyResponder) && isModuleEnabled("referral");
-  const canSeeChefSpace       = canManageCenters && isModuleEnabled("chef");
-  const canSeeEmergencyAlerts = isEmergencyResponder && isModuleEnabled("alerts");
-  const canSeeSecurityOps     = isSecurityResponder && isModuleEnabled("security_ops");
-  const canSeeCenterSettings  = canManageCenterSettings && isModuleEnabled("settings");
+  const canUseReferralModule = isModuleEnabled("referral");
+  const canSeeChefSpace       = isModuleEnabled("chef");
+  const canSeeEmergencyAlerts = isModuleEnabled("alerts");
+  const canSeeSecurityOps     = isModuleEnabled("security_ops");
+  const canSeeCenterSettings  = isModuleEnabled("settings");
   const canSeeDonation        = isModuleEnabled("donation");
   const canSeeContactDeveloper = isModuleEnabled("contact_developer");
   const canSeeProject         = isModuleEnabled("project");
