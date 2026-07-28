@@ -529,7 +529,7 @@ export function Root() {
                       <Text style={styles.supportActionIconText}>ℹ️</Text>
                       <View style={styles.supportActionTextWrap}>
                         <Text style={[styles.supportActionTitleDark, { color: C.primaryDark }]}>A propos de l'application</Text>
-                        <Text style={[styles.supportActionSubDark, { color: C.primary }]}>Version {APP_VERSION} — Sante et Securite a Proximite</Text>
+                        <Text style={[styles.supportActionSubDark, { color: C.primary }]}>Version {APP_VERSION} - Sante et Securite a Proximite</Text>
                       </View>
                     </Pressable>
 
