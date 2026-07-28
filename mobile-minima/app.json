@@ -1,0 +1,56 @@
+{
+  "expo": {
+    "name": "Sante Aproximite Lite",
+    "slug": "sante-aproxmite-lite",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.yefa.sante.lite",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Cette application utilise votre position pour afficher les centres de sante les plus proches."
+      }
+    },
+    "android": {
+      "package": "com.yefa.sante.lite",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION"
+      ],
+      "config": {
+        "googleMaps": {
+          "apiKey": "AIzaSyDJDudk1ErIhzSrTkaorqLONDPtZu6V_Gk"
+        }
+      }
+    },
+    "updates": {
+      "enabled": false
+    },
+    "plugins": [
+      "expo-location",
+      "expo-sqlite",
+      [
+        "expo-notifications",
+        {
+          "color": "#1A56DB"
+        }
+      ]
+    ]
+  }
+}

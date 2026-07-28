@@ -55,6 +55,7 @@ export function ComplaintScreen({ defaultHistoryTab = "ACTIVE", hideForm = false
   const [subject, setSubject] = useState("");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
+  const [dataLoading, setDataLoading] = useState(true);
   const [feedbackLoadingComplaintId, setFeedbackLoadingComplaintId] = useState("");
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -83,6 +84,8 @@ export function ComplaintScreen({ defaultHistoryTab = "ACTIVE", hideForm = false
         .catch(() => {});
     } catch (err) {
       if (!silent) setError(err.message);
+    } finally {
+      setDataLoading(false);
     }
   }
 
@@ -389,8 +392,14 @@ export function ComplaintScreen({ defaultHistoryTab = "ACTIVE", hideForm = false
 
           {displayedComplaints.length === 0 ? (
             <View style={styles.emptyHistoryBox}>
-              <Text style={styles.emptyHistoryTitle}>Aucune plainte ici pour le moment</Text>
-              <Text style={styles.emptyHistoryText}>Les nouveaux signalements apparaitront automatiquement dans cette section.</Text>
+              {dataLoading ? (
+                <Text style={styles.emptyHistoryTitle}>Chargement...</Text>
+              ) : (
+                <>
+                  <Text style={styles.emptyHistoryTitle}>Aucune plainte ici pour le moment</Text>
+                  <Text style={styles.emptyHistoryText}>Les nouveaux signalements apparaitront automatiquement dans cette section.</Text>
+                </>
+              )}
             </View>
           ) : null}
 

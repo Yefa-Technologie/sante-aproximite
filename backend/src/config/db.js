@@ -74,7 +74,9 @@ async function runMigrations() {
           'CHR',
           'CH',
           'CHS',
-          'CLINIQUE_PRIVEE',
+          'CLINIQUE',
+          'POLYCLINIQUE',
+          'INFIRMERIE',
           'CLCC',
           'ESPC',
           'CENTRE_SANTE',
@@ -241,6 +243,18 @@ async function runMigrations() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `);
+  await pool.query(`
+    ALTER TABLE health_center_services
+    ADD COLUMN IF NOT EXISTS beds_available INT NOT NULL DEFAULT 0;
+  `);
+  await pool.query(`
+    ALTER TABLE health_center_services
+    ADD COLUMN IF NOT EXISTS beds_occupied INT NOT NULL DEFAULT 0;
+  `);
+  await pool.query(`
+    ALTER TABLE health_center_services
+    ADD COLUMN IF NOT EXISTS beds_out_of_service INT NOT NULL DEFAULT 0;
+  `);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS center_complaints (
@@ -263,6 +277,18 @@ async function runMigrations() {
       user_id BIGINT NULL REFERENCES users(id) ON DELETE SET NULL,
       status TEXT NOT NULL CHECK (status IN ('NEW', 'IN_PROGRESS', 'RESOLVED', 'REJECTED')),
       message TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS center_suggestions (
+      id BIGSERIAL PRIMARY KEY,
+      center_id BIGINT NOT NULL REFERENCES health_centers(id) ON DELETE CASCADE,
+      user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      message TEXT NOT NULL,
+      is_read BOOLEAN NOT NULL DEFAULT FALSE,
+      read_at TIMESTAMPTZ NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `);
@@ -538,6 +564,11 @@ async function runMigrations() {
 
 
   await pool.query(`
+    ALTER TABLE health_centers
+    DROP CONSTRAINT IF EXISTS health_centers_level_check;
+  `);
+
+  await pool.query(`
     UPDATE health_centers
     SET level = CASE
       WHEN level IS NULL OR btrim(level) = '' THEN 'CENTRE_SANTE'
@@ -548,13 +579,21 @@ async function runMigrations() {
 
   await pool.query(`
     UPDATE health_centers
+    SET level = 'CLINIQUE'
+    WHERE level = 'CLINIQUE_PRIVEE';
+  `);
+
+  await pool.query(`
+    UPDATE health_centers
     SET level = 'CENTRE_SANTE'
     WHERE level NOT IN (
       'CHU',
       'CHR',
       'CH',
       'CHS',
-      'CLINIQUE_PRIVEE',
+      'CLINIQUE',
+      'POLYCLINIQUE',
+      'INFIRMERIE',
       'CLCC',
       'ESPC',
       'CENTRE_SANTE',
@@ -603,7 +642,9 @@ async function runMigrations() {
         'CHR',
         'CH',
         'CHS',
-        'CLINIQUE_PRIVEE',
+        'CLINIQUE',
+        'POLYCLINIQUE',
+        'INFIRMERIE',
         'CLCC',
         'ESPC',
         'CENTRE_SANTE',
@@ -873,12 +914,132 @@ async function runMigrations() {
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_analytics_user_role ON analytics_events(user_role);`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_analytics_user_id ON analytics_events(user_id);`);
 
+  // center_visits : enregistrement des visites patients
+  await pool.query(`
+    ALTER TABLE health_centers ADD COLUMN IF NOT EXISTS checkin_code TEXT NULL;
+  `);
+  await pool.query(`
+    UPDATE health_centers
+    SET checkin_code = UPPER(SUBSTRING(MD5(RANDOM()::TEXT || id::TEXT || NOW()::TEXT), 1, 6))
+    WHERE checkin_code IS NULL;
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS center_visits (
+      id BIGSERIAL PRIMARY KEY,
+      center_id BIGINT NOT NULL REFERENCES health_centers(id) ON DELETE CASCADE,
+      user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      visited_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      confirmation_type TEXT NOT NULL CHECK (confirmation_type IN ('CODE', 'PROFESSIONAL', 'SELF_DECLARED')),
+      confirmed_by BIGINT NULL REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT center_visits_user_center_unique UNIQUE (center_id, user_id)
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_center_visits_user_id ON center_visits(user_id);`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_center_visits_center_id ON center_visits(center_id);`);
+  await pool.query(`ALTER TABLE center_visits DROP CONSTRAINT IF EXISTS center_visits_confirmation_type_check;`);
+  await pool.query(`
+    ALTER TABLE center_visits ADD CONSTRAINT center_visits_confirmation_type_check
+    CHECK (confirmation_type IN ('CODE', 'PROFESSIONAL', 'SELF_DECLARED'));
+  `);
+
   // Attribuer le rôle DEVELOPER au compte développeur principal
   await pool.query(`UPDATE users SET role = 'DEVELOPER' WHERE email = 'skaragher@gmail.com';`);
   await pool.query(`
     INSERT INTO user_roles (user_id, role)
     SELECT id, 'DEVELOPER' FROM users WHERE email = 'skaragher@gmail.com'
     ON CONFLICT (user_id, role) DO NOTHING;
+  `);
+
+  // patient_referrals : orientation/depot de patient vers un centre de reference
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS patient_referrals (
+      id BIGSERIAL PRIMARY KEY,
+      origin_user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      destination_center_id BIGINT NOT NULL REFERENCES health_centers(id) ON DELETE CASCADE,
+      patient_phone TEXT NOT NULL,
+      patient_name TEXT NULL,
+      reason TEXT NULL,
+      status TEXT NOT NULL CHECK (status IN ('PENDING', 'RECEIVED', 'REJECTED', 'CANCELLED')) DEFAULT 'PENDING',
+      received_by BIGINT NULL REFERENCES users(id) ON DELETE SET NULL,
+      received_at TIMESTAMPTZ NULL,
+      rejection_reason TEXT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+  await pool.query(
+    "CREATE INDEX IF NOT EXISTS idx_patient_referrals_destination_center_id ON patient_referrals(destination_center_id);"
+  );
+  await pool.query(
+    "CREATE INDEX IF NOT EXISTS idx_patient_referrals_origin_user_id ON patient_referrals(origin_user_id);"
+  );
+  await pool.query(
+    "CREATE INDEX IF NOT EXISTS idx_patient_referrals_status ON patient_referrals(status);"
+  );
+  await pool.query(`
+    ALTER TABLE patient_referrals ADD COLUMN IF NOT EXISTS service_name TEXT NULL;
+  `);
+  await pool.query(`
+    ALTER TABLE patient_referrals ADD COLUMN IF NOT EXISTS rejection_reason TEXT NULL;
+  `);
+  await pool.query(`
+    ALTER TABLE patient_referrals DROP CONSTRAINT IF EXISTS patient_referrals_status_check;
+  `);
+  await pool.query(`
+    ALTER TABLE patient_referrals
+    ADD CONSTRAINT patient_referrals_status_check
+    CHECK (status IN ('PENDING', 'RECEIVED', 'REJECTED', 'CANCELLED'));
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key TEXT PRIMARY KEY,
+      value JSONB NOT NULL,
+      updated_by BIGINT NULL REFERENCES users(id) ON DELETE SET NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS module_role_settings (
+      module_key TEXT NOT NULL,
+      role TEXT NOT NULL,
+      enabled BOOLEAN NOT NULL DEFAULT TRUE,
+      updated_by BIGINT NULL REFERENCES users(id) ON DELETE SET NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (module_key, role)
+    );
+  `);
+  // app_key : distingue les reglages entre les apps mobiles (mobile / mobile-minima)
+  await pool.query(`
+    ALTER TABLE module_role_settings ADD COLUMN IF NOT EXISTS app_key TEXT NOT NULL DEFAULT 'mobile';
+  `);
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM information_schema.key_column_usage
+        WHERE table_name = 'module_role_settings'
+          AND constraint_name = 'module_role_settings_pkey'
+          AND column_name = 'app_key'
+      ) THEN
+        ALTER TABLE module_role_settings DROP CONSTRAINT IF EXISTS module_role_settings_pkey;
+        ALTER TABLE module_role_settings ADD CONSTRAINT module_role_settings_pkey PRIMARY KEY (module_key, role, app_key);
+      END IF;
+    END $$;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS push_tokens (
+      id BIGSERIAL PRIMARY KEY,
+      user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      token TEXT NOT NULL,
+      app_key TEXT NOT NULL DEFAULT 'mobile',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT push_tokens_user_token_unique UNIQUE (user_id, token)
+    );
   `);
 }
 

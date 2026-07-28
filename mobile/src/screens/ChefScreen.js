@@ -1,7 +1,11 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from "expo-location";
+import * as Print from "expo-print";
 import { useEffect, useRef, useState } from "react";
 import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import QRCode from "react-native-qrcode-svg";
 import { apiFetch } from "../api/client";
+import { DropdownField } from "../components/DropdownField";
 import { useAuth } from "../context/AuthContext";
 import { C, R, S, shared } from "../theme";
 
@@ -17,7 +21,9 @@ const LEVEL_OPTIONS = [
   { label: "CHR",                     value: "CHR" },
   { label: "CH",                      value: "CH" },
   { label: "CHS",                     value: "CHS" },
-  { label: "Clinique privee",         value: "CLINIQUE_PRIVEE" },
+  { label: "Clinique",                value: "CLINIQUE" },
+  { label: "Polyclinique",            value: "POLYCLINIQUE" },
+  { label: "Infirmerie",              value: "INFIRMERIE" },
   { label: "CLCC",                    value: "CLCC" },
   { label: "ESPC",                    value: "ESPC" },
   { label: "Centre de sante",         value: "CENTRE_SANTE" },
@@ -57,10 +63,12 @@ function formatGeoOption(option) {
 }
 
 export function ChefScreen() {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const scrollRef = useRef(null);
   const inputRefs = useRef({});
+  const centerCacheKey = user?.id ? `sante_aproxmite_chef_center_${user.id}` : null;
   const [centerId, setCenterId]                         = useState("");
+  const [centerChecked, setCenterChecked]               = useState(false);
   const [centerApprovalStatus, setCenterApprovalStatus] = useState(null);
   const [error, setError]                               = useState("");
   const [message, setMessage]                           = useState("");
@@ -70,9 +78,39 @@ export function ChefScreen() {
   const [complaintSummary, setComplaintSummary]         = useState(null);
   const [complaintNotes, setComplaintNotes]             = useState({});
   const [complaintActionLoadingId, setComplaintActionLoadingId] = useState("");
+  const [suggestionsLoading, setSuggestionsLoading]     = useState(false);
+  const [suggestionsList, setSuggestionsList]           = useState([]);
+  const [suggestionActionLoadingId, setSuggestionActionLoadingId] = useState("");
+  const [suggestionNotice, setSuggestionNotice]         = useState("");
+  const suggestionsUnreadCountRef = useRef(0);
+  const suggestionNoticeTimeoutRef = useRef(null);
   const [regions, setRegions]                           = useState([]);
   const [districts, setDistricts]                       = useState([]);
   const [geoLoading, setGeoLoading]                     = useState(false);
+  const [checkinCode, setCheckinCode]                   = useState("");
+  const [printingQr, setPrintingQr]                     = useState(false);
+  const qrRef = useRef(null);
+  const [visitPhone, setVisitPhone]                     = useState("");
+  const [visitLoading, setVisitLoading]                 = useState(false);
+  const [visitMsg, setVisitMsg]                         = useState({ text: "", ok: true });
+  const [referralsLoading, setReferralsLoading]         = useState(false);
+  const [referralsList, setReferralsList]               = useState([]);
+  const [referralActionLoadingId, setReferralActionLoadingId] = useState("");
+  const [referralRejectingId, setReferralRejectingId]   = useState("");
+  const [referralRejectDrafts, setReferralRejectDrafts] = useState({});
+  const [activeSection, setActiveSection]               = useState("info");
+  const [skipCodeGate, setSkipCodeGate]                 = useState(false);
+  const [claimCode, setClaimCode]                       = useState("");
+  const [claimLoading, setClaimLoading]                 = useState(false);
+  const [claimError, setClaimError]                     = useState("");
+  const [claimNotFound, setClaimNotFound]               = useState(false);
+  const [isEditingCenter, setIsEditingCenter]           = useState(false);
+  const [openDropdown, setOpenDropdown]                 = useState(null);
+  const [centerServices, setCenterServices]             = useState([]);
+  const [serviceActionLoadingName, setServiceActionLoadingName] = useState("");
+  const [editingServiceName, setEditingServiceName]     = useState("");
+  const [serviceEditDraft, setServiceEditDraft]         = useState({ name: "", description: "", bedsAvailable: "" });
+  const [serviceError, setServiceError]                 = useState("");
   const [form, setForm] = useState({
     name: "", address: "", establishmentCode: "",
     regionCode: "", districtCode: "",
@@ -85,9 +123,19 @@ export function ChefScreen() {
     try {
       const data = await apiFetch("/centers", { token });
       const center = data?.[0];
-      if (!center) { setCenterApprovalStatus(null); return; }
+      if (!center) {
+        setCenterApprovalStatus(null);
+        setCenterChecked(true);
+        if (centerCacheKey) AsyncStorage.removeItem(centerCacheKey).catch(() => {});
+        return;
+      }
       setCenterId(center._id);
+      setCenterChecked(true);
+      if (centerCacheKey) AsyncStorage.setItem(centerCacheKey, String(center._id)).catch(() => {});
       setCenterApprovalStatus(String(center.approvalStatus || "").toUpperCase() || null);
+      apiFetch(`/centers/${center._id}/checkin-code`, { token })
+        .then((d) => setCheckinCode(d.checkinCode || ""))
+        .catch(() => {});
       setForm({
         name: center.name || "",
         address: center.address || "",
@@ -101,8 +149,59 @@ export function ChefScreen() {
         latitude: String(center.location?.coordinates?.[1] || ""),
         longitude: String(center.location?.coordinates?.[0] || "")
       });
+      setCenterServices(Array.isArray(center.services) ? center.services : []);
     } catch (err) {
+      setCenterChecked(true);
       if (!silent) setError(err.message);
+    }
+  }
+
+  async function adjustServiceBeds(serviceName, adjust) {
+    setServiceError("");
+    setServiceActionLoadingName(serviceName);
+    try {
+      await apiFetch(`/centers/${centerId}/services/${encodeURIComponent(serviceName)}`, {
+        token,
+        method: "PATCH",
+        body: { adjust },
+      });
+      await loadChefCenter({ silent: true });
+    } catch (err) {
+      setServiceError(err.message);
+    } finally {
+      setServiceActionLoadingName("");
+    }
+  }
+
+  function startEditService(service) {
+    setEditingServiceName(service.name);
+    setServiceEditDraft({
+      name: service.name,
+      description: service.description || "",
+      bedsAvailable: String(service.bedsAvailable ?? 0),
+    });
+    setServiceError("");
+  }
+
+  async function saveServiceEdit() {
+    setServiceError("");
+    setServiceActionLoadingName(editingServiceName);
+    try {
+      await apiFetch(`/centers/${centerId}/services/${encodeURIComponent(editingServiceName)}`, {
+        token,
+        method: "PATCH",
+        body: {
+          name: serviceEditDraft.name.trim(),
+          description: serviceEditDraft.description.trim(),
+          bedsAvailable: Number(serviceEditDraft.bedsAvailable) || 0,
+        },
+      });
+      setEditingServiceName("");
+      await loadChefCenter({ silent: true });
+    } catch (err) {
+      setServiceError(err.message);
+    } finally {
+      setServiceActionLoadingName("");
     }
   }
 
@@ -123,6 +222,96 @@ export function ChefScreen() {
       if (!silent) setError(err.message);
     } finally {
       setComplaintsLoading(false);
+    }
+  }
+
+  function showSuggestionNotice(text) {
+    if (suggestionNoticeTimeoutRef.current) clearTimeout(suggestionNoticeTimeoutRef.current);
+    setSuggestionNotice(text);
+    suggestionNoticeTimeoutRef.current = setTimeout(() => {
+      setSuggestionNotice("");
+      suggestionNoticeTimeoutRef.current = null;
+    }, 6000);
+  }
+
+  async function loadSuggestionsData({ silent = false, notifyOnNew = false } = {}) {
+    if (!token || !centerId) return;
+    if (String(centerApprovalStatus || "").toUpperCase() !== "APPROVED") {
+      setSuggestionsList([]); suggestionsUnreadCountRef.current = 0; return;
+    }
+    try {
+      setSuggestionsLoading(true);
+      const data = await apiFetch(`/centers/${centerId}/suggestions`, { token });
+      const list = Array.isArray(data) ? data : [];
+      setSuggestionsList(list);
+      const unreadCount = list.filter((item) => !item.isRead).length;
+      if (notifyOnNew && unreadCount > suggestionsUnreadCountRef.current) {
+        showSuggestionNotice("Nouvelle observation reçue");
+      }
+      suggestionsUnreadCountRef.current = unreadCount;
+    } catch (err) {
+      if (!silent) setError(err.message);
+    } finally {
+      setSuggestionsLoading(false);
+    }
+  }
+
+  async function markSuggestionRead(suggestionId) {
+    setSuggestionActionLoadingId(String(suggestionId));
+    try {
+      await apiFetch(`/suggestions/${suggestionId}/read`, { token, method: "PATCH" });
+      await loadSuggestionsData({ silent: true });
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSuggestionActionLoadingId("");
+    }
+  }
+
+  async function loadReferralsData({ silent = false } = {}) {
+    if (!token) return;
+    if (String(centerApprovalStatus || "").toUpperCase() !== "APPROVED") {
+      setReferralsList([]); return;
+    }
+    try {
+      setReferralsLoading(true);
+      const data = await apiFetch("/referrals/incoming", { token });
+      setReferralsList(Array.isArray(data) ? data : []);
+    } catch (err) {
+      if (!silent) setError(err.message);
+    } finally {
+      setReferralsLoading(false);
+    }
+  }
+
+  async function confirmReferralReception(referralId) {
+    setReferralActionLoadingId(String(referralId));
+    try {
+      await apiFetch(`/referrals/${referralId}/confirm`, { token, method: "POST" });
+      await loadReferralsData({ silent: true });
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setReferralActionLoadingId("");
+    }
+  }
+
+  async function rejectReferralReception(referralId) {
+    const reason = String(referralRejectDrafts[referralId] || "").trim();
+    if (!reason) {
+      setError("Indiquez un motif de rejet");
+      return;
+    }
+    setReferralActionLoadingId(String(referralId));
+    try {
+      await apiFetch(`/referrals/${referralId}/reject`, { token, method: "POST", body: { reason } });
+      setReferralRejectDrafts((prev) => { const next = { ...prev }; delete next[referralId]; return next; });
+      setReferralRejectingId("");
+      await loadReferralsData({ silent: true });
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setReferralActionLoadingId("");
     }
   }
 
@@ -156,6 +345,13 @@ export function ChefScreen() {
   }
 
   useEffect(() => {
+    if (!centerCacheKey) return;
+    AsyncStorage.getItem(centerCacheKey)
+      .then((cached) => { if (cached) setCenterId(cached); })
+      .catch(() => {});
+  }, [centerCacheKey]);
+
+  useEffect(() => {
     refreshAll({ silent: true }).catch(() => {});
     const interval = setInterval(() => refreshAll({ silent: true }).catch(() => {}), AUTO_REFRESH_MS);
     return () => clearInterval(interval);
@@ -168,6 +364,111 @@ export function ChefScreen() {
   useEffect(() => {
     loadComplaintsData({ silent: true }).catch(() => {});
   }, [token, centerApprovalStatus]);
+
+  useEffect(() => {
+    loadSuggestionsData({ silent: true }).catch(() => {});
+    const interval = setInterval(() => {
+      loadSuggestionsData({ silent: true, notifyOnNew: true }).catch(() => {});
+    }, 20000);
+    return () => clearInterval(interval);
+  }, [token, centerId, centerApprovalStatus]);
+
+  useEffect(() => {
+    loadReferralsData({ silent: true }).catch(() => {});
+    const interval = setInterval(() => {
+      loadReferralsData({ silent: true }).catch(() => {});
+    }, 20000);
+    return () => clearInterval(interval);
+  }, [token, centerId, centerApprovalStatus]);
+
+  useEffect(() => {
+    return () => {
+      if (suggestionNoticeTimeoutRef.current) clearTimeout(suggestionNoticeTimeoutRef.current);
+    };
+  }, []);
+
+  const isApproved = String(centerApprovalStatus || "").toUpperCase() === "APPROVED";
+  const referralsPendingCount = referralsList.filter((item) => item.status === "PENDING").length;
+  const suggestionsUnreadCount = suggestionsList.filter((item) => !item.isRead).length;
+
+  useEffect(() => {
+    if (!isApproved && activeSection !== "info") setActiveSection("info");
+  }, [isApproved, activeSection]);
+
+  async function confirmPatientVisit() {
+    if (!visitPhone.trim()) {
+      setVisitMsg({ text: "Entrez le numero de telephone du patient", ok: false });
+      return;
+    }
+    setVisitLoading(true);
+    setVisitMsg({ text: "", ok: true });
+    try {
+      await apiFetch(`/centers/${centerId}/confirm-visit`, {
+        token,
+        method: "POST",
+        body: { patientPhone: visitPhone.trim() },
+      });
+      setVisitPhone("");
+      setVisitMsg({ text: "Visite du patient confirmee", ok: true });
+    } catch (err) {
+      setVisitMsg({ text: err.message || "Erreur", ok: false });
+    } finally {
+      setVisitLoading(false);
+    }
+  }
+
+  async function printQrCode() {
+    if (!qrRef.current) return;
+    setPrintingQr(true);
+    try {
+      const dataUrl = await new Promise((resolve, reject) => {
+        qrRef.current.toDataURL((data) => (data ? resolve(data) : reject(new Error("QR indisponible"))));
+      });
+      const html = `
+        <html>
+          <body style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px;font-family:Helvetica,Arial,sans-serif;">
+            <h2 style="margin-bottom:4px;">${f.name || "Centre de sante"}</h2>
+            <p style="color:#64748b;margin-top:0;">Scannez ce QR code pour enregistrer votre visite</p>
+            <img src="data:image/png;base64,${dataUrl}" style="width:280px;height:280px;margin:24px 0;" />
+            <p style="font-size:20px;font-weight:700;letter-spacing:2px;">${checkinCode}</p>
+          </body>
+        </html>
+      `;
+      await Print.printAsync({ html });
+    } catch (err) {
+      setVisitMsg({ text: err.message || "Impression impossible", ok: false });
+    } finally {
+      setPrintingQr(false);
+    }
+  }
+
+  async function claimByCode() {
+    const code = claimCode.trim();
+    if (!code) {
+      setClaimError("Entrez le code de votre etablissement");
+      return;
+    }
+    setClaimLoading(true);
+    setClaimError("");
+    setClaimNotFound(false);
+    try {
+      await apiFetch("/centers/claim-by-code", { token, method: "POST", body: { code } });
+      await refreshAll({ silent: true });
+    } catch (err) {
+      if (err.status === 404) {
+        setClaimNotFound(true);
+      } else {
+        setClaimError(err.message || "Erreur");
+      }
+    } finally {
+      setClaimLoading(false);
+    }
+  }
+
+  function createWithClaimCode() {
+    setF("establishmentCode", claimCode.trim());
+    setSkipCodeGate(true);
+  }
 
   async function getCurrentPosition() {
     setError("");
@@ -197,6 +498,7 @@ export function ChefScreen() {
       setMessage(result?.queued ? result.message || "Action enregistree hors ligne." : centerId ? "Centre mis a jour et envoye en validation" : "Centre cree et envoye en validation");
       if (!result?.queued) {
         await refreshAll({ silent: true });
+        setIsEditingCenter(false);
       }
     } catch (err) {
       setError(err.message);
@@ -235,18 +537,10 @@ export function ChefScreen() {
     if (ref) inputRefs.current[key] = ref;
   }
 
-  function scrollToField(key) {
-    const input = inputRefs.current[key];
-    const scroll = scrollRef.current;
-    if (!input || !scroll || typeof input.measureLayout !== "function") return;
-    const target = typeof scroll.getInnerViewNode === "function" ? scroll.getInnerViewNode() : scroll;
-    requestAnimationFrame(() => {
-      input.measureLayout(
-        target,
-        (_x, y) => scroll.scrollTo?.({ y: Math.max(0, y - 24), animated: true }),
-        () => {}
-      );
-    });
+  function scrollToField() {
+    // no-op: measureLayout against the ScrollView ref is unsupported on the new
+    // architecture (logs "ref.measureLayout must be called with a ref to a
+    // native component" instead of throwing a catchable error) — disabled.
   }
 
   return (
@@ -277,15 +571,204 @@ export function ChefScreen() {
         </View>
       </View>
 
+      {!centerChecked && !centerId ? (
+        <View style={styles.card}>
+          <Text style={styles.visitConfirmHint}>Chargement...</Text>
+        </View>
+      ) : !centerId && !skipCodeGate ? (
+        <View style={styles.card}>
+          <Text style={styles.sectionLabel}>CODE DE L'ETABLISSEMENT</Text>
+          <Text style={styles.visitConfirmHint}>
+            Si votre etablissement existe deja dans la base (import officiel), entrez son code pour recuperer ses informations. Sinon, creez un nouveau centre.
+          </Text>
+          <TextInput
+            style={shared.input}
+            value={claimCode}
+            onChangeText={(v) => { setClaimCode(v); setClaimError(""); setClaimNotFound(false); }}
+            placeholder="Code etablissement"
+            autoCapitalize="characters"
+          />
+          {claimError ? <Text style={shared.error}>{claimError}</Text> : null}
+          {claimNotFound ? (
+            <View style={{ gap: 8 }}>
+              <Text style={shared.error}>Aucun centre trouve avec ce code.</Text>
+              <Pressable style={styles.primaryBtn} onPress={createWithClaimCode}>
+                <Text style={styles.primaryBtnText}>Creer un nouveau centre avec ce code</Text>
+              </Pressable>
+            </View>
+          ) : null}
+          <View style={styles.row}>
+            <Pressable style={styles.outlineBtn} onPress={() => setSkipCodeGate(true)}>
+              <Text style={styles.outlineBtnText}>Creer sans code</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.primaryBtn, { flex: 1 }, claimLoading && { opacity: 0.6 }]}
+              onPress={claimByCode}
+              disabled={claimLoading}
+            >
+              <Text style={styles.primaryBtnText}>{claimLoading ? "Verification..." : "Verifier le code"}</Text>
+            </Pressable>
+          </View>
+        </View>
+      ) : (
+      <>
+      {/* Navigation secondaire */}
+      <View style={styles.sectionNav}>
+        <Pressable
+          style={[styles.sectionNavItem, activeSection === "info" && styles.sectionNavItemActive]}
+          onPress={() => setActiveSection("info")}
+        >
+          <Text style={[styles.sectionNavText, activeSection === "info" && styles.sectionNavTextActive]}>Mon centre</Text>
+        </Pressable>
+        {isApproved ? (
+          <Pressable
+            style={[styles.sectionNavItem, activeSection === "suivi" && styles.sectionNavItemActive]}
+            onPress={() => setActiveSection("suivi")}
+          >
+            <Text style={[styles.sectionNavText, activeSection === "suivi" && styles.sectionNavTextActive]}>Suivi patients</Text>
+            {referralsPendingCount > 0 ? (
+              <View style={styles.sectionNavBadge}>
+                <Text style={styles.sectionNavBadgeText}>{referralsPendingCount}</Text>
+              </View>
+            ) : null}
+          </Pressable>
+        ) : null}
+        {isApproved ? (
+          <Pressable
+            style={[styles.sectionNavItem, activeSection === "retours" && styles.sectionNavItemActive]}
+            onPress={() => setActiveSection("retours")}
+          >
+            <Text style={[styles.sectionNavText, activeSection === "retours" && styles.sectionNavTextActive]}>Retours usagers</Text>
+            {suggestionsUnreadCount > 0 ? (
+              <View style={styles.sectionNavBadge}>
+                <Text style={styles.sectionNavBadgeText}>{suggestionsUnreadCount}</Text>
+              </View>
+            ) : null}
+          </Pressable>
+        ) : null}
+      </View>
+
+      {message ? <Text style={shared.success}>{message}</Text> : null}
+      {error   ? <Text style={shared.error}>{error}</Text>     : null}
+
+      {activeSection === "info" ? (
+      <>
+      {centerId && !isEditingCenter ? (
+        <View style={styles.card}>
+          <View style={[styles.headerRow, { justifyContent: "space-between" }]}>
+            <Text style={styles.sectionLabel}>INFORMATIONS DU CENTRE</Text>
+            <Pressable style={styles.outlineBtn} onPress={() => setIsEditingCenter(true)}>
+              <Text style={styles.outlineBtnText}>Modifier</Text>
+            </Pressable>
+          </View>
+          <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Nom</Text><Text style={styles.summaryValue}>{f.name || "-"}</Text></View>
+          <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Adresse</Text><Text style={styles.summaryValue}>{f.address || "-"}</Text></View>
+          <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Code etablissement</Text><Text style={styles.summaryValue}>{f.establishmentCode || "-"}</Text></View>
+          <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Region</Text><Text style={styles.summaryValue}>{formatGeoOption(regions.find((r) => r.code === f.regionCode)) || "-"}</Text></View>
+          <View style={styles.summaryRow}><Text style={styles.summaryLabel}>District</Text><Text style={styles.summaryValue}>{formatGeoOption(districts.find((d) => d.code === f.districtCode)) || "-"}</Text></View>
+          <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Niveau</Text><Text style={styles.summaryValue}>{LEVEL_OPTIONS.find((o) => o.value === f.level)?.label || "-"}</Text></View>
+          <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Type</Text><Text style={styles.summaryValue}>{ESTABLISHMENT_TYPE_OPTIONS.find((o) => o.value === f.establishmentType)?.label || "-"}</Text></View>
+          <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Plateau technique</Text><Text style={styles.summaryValue}>{f.technicalPlatform || "-"}</Text></View>
+          <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Services</Text><Text style={styles.summaryValue}>{f.servicesCsv || "-"}</Text></View>
+          <View style={styles.summaryRow}><Text style={styles.summaryLabel}>GPS</Text><Text style={styles.summaryValue}>{f.latitude}, {f.longitude}</Text></View>
+        </View>
+      ) : null}
+
+      {centerId && !isEditingCenter ? (
+        <View style={styles.card}>
+          <Text style={styles.sectionLabel}>PLACES DISPONIBLES</Text>
+          {serviceError ? <Text style={shared.error}>{serviceError}</Text> : null}
+          {centerServices.length === 0 ? (
+            <Text style={shared.hint}>Aucun service enregistre pour ce centre.</Text>
+          ) : null}
+          {centerServices.map((service) => (
+            <View key={service.name} style={styles.serviceCard}>
+              {editingServiceName === service.name ? (
+                <View style={{ gap: 8 }}>
+                  <TextInput
+                    style={shared.input}
+                    value={serviceEditDraft.name}
+                    onChangeText={(v) => setServiceEditDraft((p) => ({ ...p, name: v }))}
+                    placeholder="Nom du service"
+                  />
+                  <TextInput
+                    style={shared.input}
+                    value={serviceEditDraft.description}
+                    onChangeText={(v) => setServiceEditDraft((p) => ({ ...p, description: v }))}
+                    placeholder="Description (optionnel)"
+                  />
+                  <TextInput
+                    style={shared.input}
+                    value={serviceEditDraft.bedsAvailable}
+                    onChangeText={(v) => setServiceEditDraft((p) => ({ ...p, bedsAvailable: v }))}
+                    placeholder="Places disponibles"
+                    keyboardType="numeric"
+                  />
+                  <View style={styles.row}>
+                    <Pressable style={styles.outlineBtn} onPress={() => setEditingServiceName("")}>
+                      <Text style={styles.outlineBtnText}>Annuler</Text>
+                    </Pressable>
+                    <Pressable
+                      style={[styles.primaryBtn, { flex: 1 }, serviceActionLoadingName === service.name && { opacity: 0.6 }]}
+                      onPress={saveServiceEdit}
+                      disabled={serviceActionLoadingName === service.name}
+                    >
+                      <Text style={styles.primaryBtnText}>
+                        {serviceActionLoadingName === service.name ? "..." : "Enregistrer"}
+                      </Text>
+                    </Pressable>
+                  </View>
+                </View>
+              ) : (
+                <>
+                  <View style={styles.complaintTop}>
+                    <Text style={styles.complaintSubject}>{service.name}</Text>
+                    <View style={[styles.badge, { backgroundColor: service.bedsAvailable > 0 ? C.greenLight : C.redLight }]}>
+                      <Text style={[styles.badgeText, { color: service.bedsAvailable > 0 ? C.green : C.red }]}>
+                        {service.bedsAvailable > 0 ? `${service.bedsAvailable} PLACE(S)` : "COMPLET"}
+                      </Text>
+                    </View>
+                  </View>
+                  <Text style={styles.complaintBody}>
+                    Occupees: {service.bedsOccupied} · Hors service: {service.bedsOutOfService}
+                  </Text>
+                  <View style={styles.row}>
+                    <Pressable
+                      style={[styles.outlineBtn, (serviceActionLoadingName === service.name || service.bedsAvailable <= 0) && { opacity: 0.5 }]}
+                      onPress={() => adjustServiceBeds(service.name, "occupy")}
+                      disabled={serviceActionLoadingName === service.name || service.bedsAvailable <= 0}
+                    >
+                      <Text style={styles.outlineBtnText}>Occuper une place</Text>
+                    </Pressable>
+                    <Pressable
+                      style={[styles.outlineBtn, (serviceActionLoadingName === service.name || service.bedsOccupied <= 0) && { opacity: 0.5 }]}
+                      onPress={() => adjustServiceBeds(service.name, "free")}
+                      disabled={serviceActionLoadingName === service.name || service.bedsOccupied <= 0}
+                    >
+                      <Text style={styles.outlineBtnText}>Liberer une place</Text>
+                    </Pressable>
+                    <Pressable style={styles.outlineBtn} onPress={() => startEditService(service)}>
+                      <Text style={styles.outlineBtnText}>Modifier</Text>
+                    </Pressable>
+                  </View>
+                </>
+              )}
+            </View>
+          ))}
+        </View>
+      ) : null}
+
+      {centerId && !isEditingCenter ? null : (
+      <>
       {/* Infos generales */}
       <View style={styles.card}>
         <Text style={styles.sectionLabel}>INFORMATIONS GENERALES</Text>
         <View style={styles.fieldGroup}>
-          <Text style={styles.fieldLabel}>Nom du centre</Text>
+          <Text style={styles.fieldLabel}>Nom du centre <Text style={styles.requiredMark}>*</Text></Text>
           <TextInput ref={(ref) => registerInputRef("name", ref)} onFocus={() => scrollToField("name")} style={shared.input} placeholder="Nom du centre" value={f.name} onChangeText={(v) => setF("name", v)} />
         </View>
         <View style={styles.fieldGroup}>
-          <Text style={styles.fieldLabel}>Adresse</Text>
+          <Text style={styles.fieldLabel}>Adresse <Text style={styles.requiredMark}>*</Text></Text>
           <TextInput ref={(ref) => registerInputRef("address", ref)} onFocus={() => scrollToField("address")} style={shared.input} placeholder="Adresse complete" value={f.address} onChangeText={(v) => setF("address", v)} />
         </View>
         <View style={styles.fieldGroup}>
@@ -297,53 +780,49 @@ export function ChefScreen() {
       {/* Localisation */}
       <View style={styles.card}>
         <Text style={styles.sectionLabel}>LOCALISATION</Text>
-        <View style={styles.fieldGroup}>
-          <Text style={styles.fieldLabel}>Region</Text>
-          <TextInput ref={(ref) => registerInputRef("regionCode", ref)} onFocus={() => scrollToField("regionCode")} style={shared.input} placeholder="Code region (ex: ABIDJAN)" autoCapitalize="characters" value={f.regionCode} onChangeText={(v) => { setF("regionCode", v); setF("districtCode", ""); }} />
-        </View>
-        {regions.length ? (
-          <View>
-            <Text style={styles.fieldLabel}>Selection rapide region</Text>
-            <View style={styles.chipGroup}>
-              {regions.map((region) => (
-                <Pressable key={region.code} style={[styles.chip, f.regionCode === region.code && styles.chipActive]} onPress={() => setForm((p) => ({ ...p, regionCode: region.code, districtCode: "" }))}>
-                  <Text style={[styles.chipText, f.regionCode === region.code && styles.chipTextActive]}>{formatGeoOption(region)}</Text>
-                </Pressable>
-              ))}
-            </View>
-          </View>
-        ) : null}
+        <DropdownField
+          label="Region *"
+          placeholder="- Selectionner une region -"
+          selectedLabel={formatGeoOption(regions.find((r) => r.code === f.regionCode))}
+          options={regions}
+          getOptionKey={(option) => option.code}
+          renderOption={formatGeoOption}
+          isOpen={openDropdown === "region"}
+          onToggle={() => setOpenDropdown((prev) => (prev === "region" ? null : "region"))}
+          onSelect={(code) => {
+            setForm((p) => ({ ...p, regionCode: code, districtCode: "" }));
+            setOpenDropdown(null);
+          }}
+          emptyText="Aucune region disponible."
+        />
         {geoLoading ? <Text style={styles.geoLoading}>Chargement...</Text> : null}
       </View>
 
       {String(f.regionCode || "").trim() ? (
         <View style={styles.card}>
           <Text style={styles.sectionLabel}>DISTRICTS DE LA REGION</Text>
-          <View style={styles.fieldGroup}>
-            <Text style={styles.fieldLabel}>District (optionnel)</Text>
-            <TextInput ref={(ref) => registerInputRef("districtCode", ref)} onFocus={() => scrollToField("districtCode")} style={shared.input} placeholder="Code district" autoCapitalize="characters" value={f.districtCode} onChangeText={(v) => setF("districtCode", v)} />
-          </View>
-          {districts.length ? (
-            <View>
-              <Text style={styles.fieldLabel}>Selection rapide district</Text>
-              <View style={styles.chipGroup}>
-                {districts.map((district) => (
-                  <Pressable key={district.code} style={[styles.chip, f.districtCode === district.code && styles.chipActive]} onPress={() => setForm((p) => ({ ...p, districtCode: district.code }))}>
-                    <Text style={[styles.chipText, f.districtCode === district.code && styles.chipTextActive]}>{formatGeoOption(district)}</Text>
-                  </Pressable>
-                ))}
-              </View>
-            </View>
-          ) : (
-            <Text style={styles.geoLoading}>Aucun district charge pour cette region.</Text>
-          )}
+          <DropdownField
+            label="District (optionnel)"
+            placeholder="- Selectionner un district -"
+            selectedLabel={formatGeoOption(districts.find((d) => d.code === f.districtCode))}
+            options={districts}
+            getOptionKey={(option) => option.code}
+            renderOption={formatGeoOption}
+            isOpen={openDropdown === "district"}
+            onToggle={() => setOpenDropdown((prev) => (prev === "district" ? null : "district"))}
+            onSelect={(code) => {
+              setF("districtCode", code);
+              setOpenDropdown(null);
+            }}
+            emptyText="Aucun district charge pour cette region."
+          />
         </View>
       ) : null}
 
       {/* Classification */}
       <View style={styles.card}>
         <Text style={styles.sectionLabel}>CLASSIFICATION</Text>
-        <Text style={styles.fieldLabel}>Niveau d'etablissement</Text>
+        <Text style={styles.fieldLabel}>Niveau d'etablissement <Text style={styles.requiredMark}>*</Text></Text>
         <View style={styles.chipGroup}>
           {LEVEL_OPTIONS.map((option) => (
             <Pressable key={option.value} style={[styles.chip, f.level === option.value && styles.chipActive]} onPress={() => setF("level", option.value)}>
@@ -351,7 +830,7 @@ export function ChefScreen() {
             </Pressable>
           ))}
         </View>
-        <Text style={[styles.fieldLabel, { marginTop: 10 }]}>Type d'etablissement</Text>
+        <Text style={[styles.fieldLabel, { marginTop: 10 }]}>Type d'etablissement <Text style={styles.requiredMark}>*</Text></Text>
         <View style={styles.chipGroup}>
           {ESTABLISHMENT_TYPE_OPTIONS.map((option) => (
             <Pressable key={option.value} style={[styles.chip, f.establishmentType === option.value && styles.chipActive]} onPress={() => setF("establishmentType", option.value)}>
@@ -365,8 +844,8 @@ export function ChefScreen() {
       <View style={styles.card}>
         <Text style={styles.sectionLabel}>SERVICES & PLATEAU TECHNIQUE</Text>
         <View style={styles.fieldGroup}>
-          <Text style={styles.fieldLabel}>Plateau technique</Text>
-          <TextInput ref={(ref) => registerInputRef("technicalPlatform", ref)} onFocus={() => scrollToField("technicalPlatform")} style={[shared.input, shared.textArea]} multiline placeholder="Plateau technique" value={f.technicalPlatform} onChangeText={(v) => setF("technicalPlatform", v)} />
+          <Text style={styles.fieldLabel}>Plateau technique <Text style={styles.requiredMark}>*</Text></Text>
+          <TextInput ref={(ref) => registerInputRef("technicalPlatform", ref)} onFocus={() => scrollToField("technicalPlatform")} style={[shared.input, shared.textArea]} multiline placeholder={"Ex: Bloc operatoire, imagerie (radio, echographie), laboratoire d'analyses, pharmacie, maternite..."} value={f.technicalPlatform} onChangeText={(v) => setF("technicalPlatform", v)} />
         </View>
         <View style={styles.fieldGroup}>
           <Text style={styles.fieldLabel}>Services (separes par virgule)</Text>
@@ -379,11 +858,11 @@ export function ChefScreen() {
         <Text style={styles.sectionLabel}>COORDONNEES GPS</Text>
         <View style={styles.row}>
           <View style={{ flex: 1 }}>
-            <Text style={styles.fieldLabel}>Latitude</Text>
+            <Text style={styles.fieldLabel}>Latitude <Text style={styles.requiredMark}>*</Text></Text>
             <TextInput ref={(ref) => registerInputRef("latitude", ref)} onFocus={() => scrollToField("latitude")} style={shared.input} keyboardType="numeric" placeholder="5.3600" value={f.latitude} onChangeText={(v) => setF("latitude", v)} />
           </View>
           <View style={{ flex: 1 }}>
-            <Text style={styles.fieldLabel}>Longitude</Text>
+            <Text style={styles.fieldLabel}>Longitude <Text style={styles.requiredMark}>*</Text></Text>
             <TextInput ref={(ref) => registerInputRef("longitude", ref)} onFocus={() => scrollToField("longitude")} style={shared.input} keyboardType="numeric" placeholder="-4.0083" value={f.longitude} onChangeText={(v) => setF("longitude", v)} />
           </View>
         </View>
@@ -392,22 +871,170 @@ export function ChefScreen() {
         </Pressable>
       </View>
 
-      {message ? <Text style={shared.success}>{message}</Text> : null}
-      {error   ? <Text style={shared.error}>{error}</Text>     : null}
-
       <View style={styles.row}>
-        <Pressable style={styles.outlineBtn} onPress={() => { setError(""); setMessage(""); refreshAll({ silent: false }).catch(() => {}); loadComplaintsData({ silent: true }).catch(() => {}); }}>
-          <Text style={styles.outlineBtnText}>Actualiser</Text>
-        </Pressable>
+        {centerId ? (
+          <Pressable style={styles.outlineBtn} onPress={() => setIsEditingCenter(false)}>
+            <Text style={styles.outlineBtnText}>Annuler</Text>
+          </Pressable>
+        ) : (
+          <Pressable style={styles.outlineBtn} onPress={() => { setError(""); setMessage(""); refreshAll({ silent: false }).catch(() => {}); loadComplaintsData({ silent: true }).catch(() => {}); loadReferralsData({ silent: true }).catch(() => {}); }}>
+            <Text style={styles.outlineBtnText}>Actualiser</Text>
+          </Pressable>
+        )}
         <Pressable style={[styles.primaryBtn, { flex: 1 }, loading && { opacity: 0.6 }]} onPress={createCenter} disabled={loading}>
           <Text style={styles.primaryBtnText}>{loading ? "Enregistrement..." : centerId ? "Mettre a jour" : "Enregistrer le centre"}</Text>
         </Pressable>
       </View>
+      </>
+      )}
+      </>
+      ) : null}
 
-      {/* Panel plaintes */}
-      {centerApprovalStatus === "APPROVED" ? (
+      {/* Suivi patients */}
+      {activeSection === "suivi" && isApproved ? (
         <View style={styles.complaintsPanel}>
-          <Text style={styles.sectionLabel}>SUIVI DU CENTRE APPROUVE</Text>
+          <Text style={styles.sectionLabel}>SUIVI DES PATIENTS</Text>
+
+          {/* QR code + code texte de visite */}
+          {checkinCode ? (
+            <View style={styles.visitCodeCard}>
+              <Text style={styles.visitCodeLabel}>QR CODE DE VISITE</Text>
+              <View style={styles.qrWrapper}>
+                <QRCode
+                  value={`SANTE:${centerId}:${checkinCode}`}
+                  size={180}
+                  color={C.primary}
+                  backgroundColor="#ffffff"
+                  getRef={(ref) => (qrRef.current = ref)}
+                />
+              </View>
+              <Text style={styles.visitCodeValue}>{checkinCode}</Text>
+              <Text style={styles.visitCodeHint}>
+                Affichez ce QR code a l'accueil. Les patients le scannent ou saisissent le code pour enregistrer leur visite.
+              </Text>
+              <Pressable style={[styles.outlineBtn, printingQr && { opacity: 0.6 }]} onPress={printQrCode} disabled={printingQr}>
+                <Text style={styles.outlineBtnText}>{printingQr ? "Preparation..." : "🖨️ Imprimer le QR code"}</Text>
+              </Pressable>
+            </View>
+          ) : null}
+
+          <View style={styles.visitConfirmCard}>
+            <Text style={styles.sectionLabel}>CONFIRMER UNE VISITE PATIENT</Text>
+            <Text style={styles.visitConfirmHint}>Entrez le numero du patient pour confirmer sa visite manuellement.</Text>
+            <TextInput
+              style={shared.input}
+              value={visitPhone}
+              onChangeText={(v) => { setVisitPhone(v); setVisitMsg({ text: "", ok: true }); }}
+              placeholder="Numero de telephone du patient"
+              keyboardType="phone-pad"
+            />
+            {visitMsg.text ? (
+              <Text style={[styles.visitMsgText, { color: visitMsg.ok ? C.green : C.red }]}>{visitMsg.text}</Text>
+            ) : null}
+            <Pressable
+              style={[styles.primaryBtn, visitLoading && { opacity: 0.6 }]}
+              onPress={confirmPatientVisit}
+              disabled={visitLoading}
+            >
+              <Text style={styles.primaryBtnText}>{visitLoading ? "Confirmation..." : "Confirmer la visite"}</Text>
+            </Pressable>
+          </View>
+
+          <View style={styles.visitConfirmCard}>
+            <Text style={styles.sectionLabel}>ORIENTATIONS DE PATIENTS RECUES</Text>
+            <Text style={styles.visitConfirmHint}>
+              Patients orientes vers votre centre par un autre professionnel. Confirmez la reception une fois le patient arrive.
+            </Text>
+            {referralsLoading ? <Text style={styles.geoLoading}>Chargement des orientations...</Text> : null}
+            {!referralsLoading && referralsList.length === 0 ? (
+              <Text style={shared.hint}>Aucune orientation en attente pour votre centre.</Text>
+            ) : null}
+            {referralsList.map((item) => (
+              <View key={item.id} style={styles.complaintCard}>
+                <View style={styles.complaintTop}>
+                  <Text style={styles.complaintSubject}>
+                    {item.patientName || item.patientPhone} {item.patientName ? `(${item.patientPhone})` : ""}
+                  </Text>
+                  <View style={[styles.badge, { backgroundColor: item.status === "RECEIVED" ? C.greenLight : item.status === "REJECTED" ? C.redLight : C.amberLight }]}>
+                    <Text style={[styles.badgeText, { color: item.status === "RECEIVED" ? C.green : item.status === "REJECTED" ? C.red : C.amber }]}>
+                      {item.status === "RECEIVED" ? "RECU" : item.status === "REJECTED" ? "REJETE" : "EN ATTENTE"}
+                    </Text>
+                  </View>
+                </View>
+                <Text style={styles.complaintBody}>Oriente par: {item.originUserName || "Professionnel"}</Text>
+                {item.serviceName ? <Text style={styles.complaintBody}>Service: {item.serviceName}</Text> : null}
+                {item.reason ? <Text style={styles.complaintBody}>Motif: {item.reason}</Text> : null}
+                {item.status === "PENDING" ? (
+                  referralRejectingId === String(item.id) ? (
+                    <View style={{ marginTop: 8, gap: 8 }}>
+                      <TextInput
+                        style={shared.input}
+                        placeholder="Motif du rejet"
+                        value={referralRejectDrafts[item.id] || ""}
+                        onChangeText={(v) => setReferralRejectDrafts((prev) => ({ ...prev, [item.id]: v }))}
+                        multiline
+                      />
+                      <View style={{ flexDirection: "row", gap: 8 }}>
+                        <Pressable
+                          style={[styles.outlineBtn, { flex: 1 }]}
+                          onPress={() => { setReferralRejectingId(""); }}
+                        >
+                          <Text style={styles.outlineBtnText}>Annuler</Text>
+                        </Pressable>
+                        <Pressable
+                          style={[styles.dangerBtn, { flex: 1 }, referralActionLoadingId === String(item.id) && { opacity: 0.6 }]}
+                          onPress={() => rejectReferralReception(item.id)}
+                          disabled={referralActionLoadingId === String(item.id)}
+                        >
+                          <Text style={styles.dangerBtnText}>
+                            {referralActionLoadingId === String(item.id) ? "..." : "Confirmer le rejet"}
+                          </Text>
+                        </Pressable>
+                      </View>
+                    </View>
+                  ) : (
+                    <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
+                      <Pressable
+                        style={[styles.primaryBtn, { flex: 1 }, referralActionLoadingId === String(item.id) && { opacity: 0.6 }]}
+                        onPress={() => confirmReferralReception(item.id)}
+                        disabled={referralActionLoadingId === String(item.id)}
+                      >
+                        <Text style={styles.primaryBtnText}>
+                          {referralActionLoadingId === String(item.id) ? "..." : "Confirmer la reception"}
+                        </Text>
+                      </Pressable>
+                      <Pressable
+                        style={[styles.dangerBtn, { flex: 1 }]}
+                        onPress={() => setReferralRejectingId(String(item.id))}
+                      >
+                        <Text style={styles.dangerBtnText}>Rejeter</Text>
+                      </Pressable>
+                    </View>
+                  )
+                ) : item.status === "REJECTED" ? (
+                  <>
+                    <Text style={styles.visitMsgText}>
+                      Rejete le {item.receivedAt ? new Date(item.receivedAt).toLocaleString() : "-"}
+                    </Text>
+                    {item.rejectionReason ? (
+                      <Text style={styles.complaintBody}>Motif du rejet: {item.rejectionReason}</Text>
+                    ) : null}
+                  </>
+                ) : (
+                  <Text style={styles.visitMsgText}>
+                    Reçu le {item.receivedAt ? new Date(item.receivedAt).toLocaleString() : "-"}
+                  </Text>
+                )}
+              </View>
+            ))}
+          </View>
+        </View>
+      ) : null}
+
+      {/* Retours usagers */}
+      {activeSection === "retours" && isApproved ? (
+        <View style={styles.complaintsPanel}>
+          <Text style={styles.sectionLabel}>RETOURS USAGERS</Text>
 
           {complaintSummary ? (
             <View style={styles.statsRow}>
@@ -454,8 +1081,44 @@ export function ChefScreen() {
               </Pressable>
             </View>
           ))}
+
+          <Text style={[styles.sectionLabel, { marginTop: 6 }]}>OBSERVATIONS / SUGGESTIONS</Text>
+
+          {suggestionNotice ? (
+            <View style={styles.suggestionNoticeBar}>
+              <Text style={styles.suggestionNoticeText}>{suggestionNotice}</Text>
+            </View>
+          ) : null}
+
+          {suggestionsLoading ? <Text style={styles.geoLoading}>Chargement des observations...</Text> : null}
+          {!suggestionsLoading && suggestionsList.length === 0 ? <Text style={shared.hint}>Aucune observation pour votre centre.</Text> : null}
+
+          {suggestionsList.map((item) => (
+            <View key={item.id} style={styles.complaintCard}>
+              <View style={styles.complaintTop}>
+                <Text style={styles.complaintSubject}>{item.userFullName || "Usager"}</Text>
+                <View style={[styles.badge, { backgroundColor: item.isRead ? C.greenLight : C.amberLight }]}>
+                  <Text style={[styles.badgeText, { color: item.isRead ? C.green : C.amber }]}>
+                    {item.isRead ? "LUE" : "NON LUE"}
+                  </Text>
+                </View>
+              </View>
+              <Text style={styles.complaintBody}>{item.message}</Text>
+              {!item.isRead ? (
+                <Pressable
+                  style={[styles.outlineBtn, suggestionActionLoadingId === String(item.id) && { opacity: 0.5 }]}
+                  onPress={() => markSuggestionRead(item.id)}
+                  disabled={suggestionActionLoadingId === String(item.id)}
+                >
+                  <Text style={styles.outlineBtnText}>{suggestionActionLoadingId === String(item.id) ? "..." : "Marquer comme lue"}</Text>
+                </Pressable>
+              ) : null}
+            </View>
+          ))}
         </View>
       ) : null}
+      </>
+      )}
     </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -465,12 +1128,50 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   content:   { padding: 16, gap: 14, paddingBottom: 32 },
 
+  suggestionNoticeBar: {
+    backgroundColor: C.amberLight,
+    borderRadius: R.sm,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  suggestionNoticeText: { color: C.amber, fontWeight: "700", fontSize: 13 },
+
   header:      { flexDirection: "row", alignItems: "center", gap: 14 },
   headerIcon:  { width: 52, height: 52, borderRadius: R.md, alignItems: "center", justifyContent: "center" },
   headerEmoji: { fontSize: 26 },
   headerTitle: { fontSize: 18, fontWeight: "800", color: C.textDark },
   headerRow:   { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 4 },
   headerSub:   { fontSize: 13, color: C.textMuted },
+
+  sectionNav: {
+    flexDirection: "row",
+    gap: 8,
+    backgroundColor: C.surfaceAlt,
+    borderRadius: R.full,
+    padding: 4,
+  },
+  sectionNavItem: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 9,
+    borderRadius: R.full,
+  },
+  sectionNavItemActive: { backgroundColor: ACCENT, ...S.sm },
+  sectionNavText: { color: C.textMed, fontWeight: "700", fontSize: 12.5 },
+  sectionNavTextActive: { color: "#fff" },
+  sectionNavBadge: {
+    backgroundColor: C.red,
+    borderRadius: R.full,
+    minWidth: 18,
+    height: 18,
+    paddingHorizontal: 4,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  sectionNavBadgeText: { color: "#fff", fontSize: 10, fontWeight: "800" },
 
   card: {
     backgroundColor: C.surface, borderRadius: R.md,
@@ -481,6 +1182,7 @@ const styles = StyleSheet.create({
   sectionLabel: { fontSize: 10, fontWeight: "800", color: C.textMuted, letterSpacing: 1 },
   fieldGroup:   { gap: 4 },
   fieldLabel:   { fontSize: 12, fontWeight: "700", color: C.textMed },
+  requiredMark: { color: C.red, fontWeight: "800" },
   geoLoading:   { color: ACCENT, fontWeight: "600", fontSize: 13 },
 
   chipGroup:      { flexDirection: "row", flexWrap: "wrap", gap: 8 },
@@ -489,11 +1191,17 @@ const styles = StyleSheet.create({
   chipText:       { color: C.textMed, fontWeight: "600", fontSize: 13 },
   chipTextActive: { color: "#fff" },
 
+  summaryRow:   { flexDirection: "row", justifyContent: "space-between", gap: 12, paddingVertical: 6 },
+  summaryLabel: { fontSize: 12, color: C.textMuted, fontWeight: "600", flex: 1 },
+  summaryValue: { fontSize: 13, color: C.textDark, fontWeight: "700", flex: 1, textAlign: "right" },
+
   row:            { flexDirection: "row", gap: 10, alignItems: "center" },
   outlineBtn:     { borderWidth: 1.5, borderColor: ACCENT, borderRadius: R.sm, paddingVertical: 10, paddingHorizontal: 14, alignItems: "center" },
   outlineBtnText: { color: ACCENT, fontWeight: "700", fontSize: 13 },
   primaryBtn:     { backgroundColor: ACCENT, borderRadius: R.sm, paddingVertical: 12, alignItems: "center", ...S.sm },
   primaryBtnText: { color: "#fff", fontWeight: "700", fontSize: 14 },
+  dangerBtn:      { backgroundColor: C.red, borderRadius: R.sm, paddingVertical: 12, alignItems: "center", ...S.sm },
+  dangerBtnText:  { color: "#fff", fontWeight: "700", fontSize: 14 },
 
   badge:     { borderRadius: R.full, paddingHorizontal: 8, paddingVertical: 3 },
   badgeText: { fontSize: 10, fontWeight: "800" },
@@ -505,7 +1213,42 @@ const styles = StyleSheet.create({
   statLabel: { fontSize: 11, color: C.textMuted, textAlign: "center" },
 
   complaintCard:    { backgroundColor: C.surfaceAlt, borderRadius: R.sm, borderWidth: 1, borderColor: C.border, padding: 12, gap: 8 },
+  serviceCard:      { backgroundColor: C.surfaceAlt, borderRadius: R.sm, borderWidth: 1, borderColor: C.border, padding: 12, gap: 8 },
   complaintTop:     { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" },
   complaintSubject: { fontWeight: "700", color: C.textDark, flex: 1, marginRight: 8 },
   complaintBody:    { color: C.textMuted, fontSize: 13 },
+
+  visitCodeCard: {
+    backgroundColor: C.primaryLight,
+    borderRadius: R.md,
+    borderWidth: 1,
+    borderColor: C.primary + "40",
+    padding: 16,
+    alignItems: "center",
+    gap: 8,
+  },
+  visitCodeLabel: { fontSize: 10, fontWeight: "800", color: C.primary, letterSpacing: 1 },
+  qrWrapper: {
+    backgroundColor: "#ffffff",
+    padding: 12,
+    borderRadius: R.md,
+    borderWidth: 1,
+    borderColor: C.primary + "30",
+    ...S.md,
+  },
+  visitCodeValue: { fontSize: 32, fontWeight: "900", color: C.primary, letterSpacing: 8 },
+  visitCodeHint:  { fontSize: 11, color: C.textMed, textAlign: "center", lineHeight: 16 },
+
+  visitConfirmCard: {
+    backgroundColor: C.surface,
+    borderRadius: R.md,
+    borderWidth: 1,
+    borderColor: C.border,
+    borderLeftWidth: 3,
+    borderLeftColor: C.green,
+    padding: 14,
+    gap: 10,
+  },
+  visitConfirmHint: { fontSize: 12, color: C.textMuted },
+  visitMsgText:     { fontSize: 13, fontWeight: "600" },
 });

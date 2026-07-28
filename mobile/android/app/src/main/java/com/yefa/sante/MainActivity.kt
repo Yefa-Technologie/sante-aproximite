@@ -1,4 +1,4 @@
-package com.santeaproximite.mobile
+package com.yefa.sante
 
 import android.os.Build
 import android.os.Bundle

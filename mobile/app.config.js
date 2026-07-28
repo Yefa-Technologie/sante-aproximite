@@ -13,6 +13,18 @@ export default ({ config }) => {
 
   return {
     ...config,
+    name: "Sante Aproximite",
+    updates: {
+      enabled: false,
+    },
+    android: {
+      ...(config.android || {}),
+      package: "com.yefa.sante",
+    },
+    ios: {
+      ...(config.ios || {}),
+      bundleIdentifier: "com.yefa.sante",
+    },
     extra: {
       ...(config?.extra || {}),
       apiUrl,

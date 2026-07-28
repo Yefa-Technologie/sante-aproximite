@@ -55,6 +55,15 @@
         Centres en attente
         <span class="settings-badge">{{ store.pendingCenters.length }}</span>
       </button>
+      <button
+        v-if="store.isDeveloper"
+        type="button"
+        class="ghost settings-switch-btn"
+        :class="{ active: store.settingsSection === 'app-settings' }"
+        @click="store.settingsSection = 'app-settings'"
+      >
+        Réglages
+      </button>
     </div>
 
     <!-- ── USERS ── -->
@@ -327,6 +336,11 @@
       </article>
     </div>
 
+    <!-- ── REGLAGES APPLICATION ── -->
+    <div v-else-if="store.settingsSection === 'app-settings' && store.isDeveloper">
+      <AppSettingsSection />
+    </div>
+
   </section>
 </template>
 
@@ -336,6 +350,7 @@ import { useDashboardStore } from "../../stores/dashboard";
 import { useAuthStore } from "../../stores/auth";
 import UsersMgmtSection from "./UsersMgmtSection.vue";
 import CentersAdminSection from "./CentersAdminSection.vue";
+import AppSettingsSection from "./AppSettingsSection.vue";
 
 const store = useDashboardStore();
 const auth = useAuthStore();

@@ -44,7 +44,13 @@
     },
     "plugins": [
       "expo-location",
-      "expo-sqlite"
+      "expo-sqlite",
+      [
+        "expo-notifications",
+        {
+          "color": "#1A56DB"
+        }
+      ]
     ],
     "extra": {
       "eas": {

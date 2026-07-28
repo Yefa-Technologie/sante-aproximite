@@ -8,7 +8,7 @@ const ACCENT = C.primary;
 
 const ESTABLISHMENT_TYPE_OPTIONS = ["CONFESSIONNEL", "PRIVE", "PUBLIQUE"];
 const LEVEL_OPTIONS = [
-  "CHU", "CHR", "CH", "CHS", "CLINIQUE_PRIVEE",
+  "CHU", "CHR", "CH", "CHS", "CLINIQUE", "POLYCLINIQUE", "INFIRMERIE",
   "CLCC", "ESPC", "CENTRE_SANTE", "SSR",
   "EHPAD_USLD", "CENTRE_RADIOTHERAPIE", "CENTRE_CARDIOLOGIE"
 ];
@@ -97,18 +97,10 @@ export function CenterSettingsScreen() {
     if (ref) inputRefs.current[key] = ref;
   }
 
-  function scrollToField(key) {
-    const input = inputRefs.current[key];
-    const scroll = scrollRef.current;
-    if (!input || !scroll || typeof input.measureLayout !== "function") return;
-    const target = typeof scroll.getInnerViewNode === "function" ? scroll.getInnerViewNode() : scroll;
-    requestAnimationFrame(() => {
-      input.measureLayout(
-        target,
-        (_x, y) => scroll.scrollTo?.({ y: Math.max(0, y - 24), animated: true }),
-        () => {}
-      );
-    });
+  function scrollToField() {
+    // no-op: measureLayout against the ScrollView ref is unsupported on the new
+    // architecture (logs "ref.measureLayout must be called with a ref to a
+    // native component" instead of throwing a catchable error) — disabled.
   }
 
   async function loadRegions() {
@@ -351,7 +343,7 @@ export function CenterSettingsScreen() {
 
       {filteredCenters.length === 0 ? (
         <View style={styles.emptyBox}>
-          <Text style={styles.emptyText}>Aucun centre pour ce filtre.</Text>
+          <Text style={styles.emptyText}>{loading ? "Chargement..." : "Aucun centre pour ce filtre."}</Text>
         </View>
       ) : null}
 

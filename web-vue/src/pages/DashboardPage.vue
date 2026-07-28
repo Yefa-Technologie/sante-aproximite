@@ -21,11 +21,17 @@
     <ComplaintsSection
       v-if="store.tab === 'complaints' && store.canSeeComplaintsPanel"
     />
+    <SuggestionsSection
+      v-if="store.tab === 'suggestions' && store.canSeeComplaintsPanel"
+    />
     <EvaluationsSection
       v-if="store.tab === 'evaluations' && store.canSeeComplaintsPanel"
     />
     <MyCenterSection
       v-if="store.tab === 'my-center' && store.isChef"
+    />
+    <ReferralsSection
+      v-if="store.tab === 'referrals' && store.isChef"
     />
     <SettingsSection
       v-if="store.tab === 'settings' && store.canManageUsers"
@@ -53,10 +59,12 @@ import { useRoute } from "vue-router";
 import { useDashboardStore } from "../stores/dashboard";
 
 import ComplaintsSection from "../components/dashboard/ComplaintsSection.vue";
+import SuggestionsSection from "../components/dashboard/SuggestionsSection.vue";
 import EmergencySection from "../components/dashboard/EmergencySection.vue";
 import EvaluationsSection from "../components/dashboard/EvaluationsSection.vue";
 import ImportsSection from "../components/dashboard/ImportsSection.vue";
 import MyCenterSection from "../components/dashboard/MyCenterSection.vue";
+import ReferralsSection from "../components/dashboard/ReferralsSection.vue";
 import NearbySection from "../components/dashboard/NearbySection.vue";
 import OverviewSection from "../components/dashboard/OverviewSection.vue";
 import SamuSection from "../components/dashboard/SamuSection.vue";
@@ -108,23 +116,34 @@ onMounted(() => {
       store.fetchDistricts(),
       store.fetchComplaints(),
       store.fetchComplaintSummary(),
+      store.fetchSuggestions(),
+      store.fetchSuggestionSummary(),
     ]));
+    store.startSuggestionAutoRefresh();
   }
 
   if (store.isChef) {
+    runBackground(() => Promise.allSettled([store.fetchRegions(), store.fetchDistricts()]));
     runBackground(async () => {
       await store.fetchAllCenters();
       if (!store.hasApprovedChefCenter) return;
       await Promise.allSettled([
         store.fetchComplaints(),
         store.fetchComplaintSummary(),
+        store.fetchSuggestions(),
+        store.fetchSuggestionSummary(),
+        store.fetchIncomingReferrals(),
       ]);
+      store.startSuggestionAutoRefresh();
+      store.startReferralsAutoRefresh();
     });
   }
 });
 
 onBeforeUnmount(() => {
   store.stopEmergencyAutoRefresh();
+  store.stopSuggestionAutoRefresh();
+  store.stopReferralsAutoRefresh();
 });
 
 // ─── Watchers ─────────────────────────────────────────────────────────────────
@@ -167,6 +186,9 @@ watch(
     }
     if (value === "evaluations" && store.canSeeComplaintsPanel) {
       await Promise.resolve(store.fetchComplaintSummary()).catch(() => {});
+    }
+    if (value === "referrals" && store.isChef) {
+      await Promise.resolve(store.fetchIncomingReferrals()).catch(() => {});
     }
     if (value === "roles") {
       await Promise.allSettled([

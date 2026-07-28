@@ -17,6 +17,11 @@
     "production": {
       "autoIncrement": true,
       "node": "20.18.0",
+      "environment": "production",
+      "env": {
+        "EXPO_PUBLIC_API_URL": "http://193.168.173.181:8081/api",
+        "EXPO_PUBLIC_API_URL_PROD": "http://193.168.173.181:8081/api"
+      },
       "android": {
         "buildType": "apk"
       }

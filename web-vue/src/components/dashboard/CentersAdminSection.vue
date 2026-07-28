@@ -107,7 +107,9 @@
                   <option value="CHR">CHR</option>
                   <option value="CH">CH</option>
                   <option value="CHS">CHS</option>
-                  <option value="CLINIQUE_PRIVEE">Clinique Privée</option>
+                  <option value="CLINIQUE">Clinique</option>
+                  <option value="POLYCLINIQUE">Polyclinique</option>
+                  <option value="INFIRMERIE">Infirmerie</option>
                   <option value="CLCC">CLCC</option>
                   <option value="ESPC">ESPC</option>
                   <option value="CENTRE_SANTE">Centre de Santé</option>
@@ -135,7 +137,7 @@
                 </select>
               </div>
               <div class="ca-mf-row">
-                <label>District</label>
+                <label>Ville</label>
                 <select v-model="store.regulatorCenterForm.districtCode">
                   <option value="">- Optionnel -</option>
                   <option v-for="d in store.availableDistrictsForRegulatorCenter" :key="d.code" :value="d.code">
@@ -147,10 +149,33 @@
                 <label>Plateforme technique *</label>
                 <input v-model="store.regulatorCenterForm.technicalPlatform" placeholder="Plateau technique" required />
               </div>
-              <div class="ca-mf-row">
-                <label>Services</label>
-                <input v-model="store.regulatorCenterForm.servicesCsv" placeholder="Urgences, Radiologie…" />
+            </div>
+
+            <div class="services-editor">
+              <div class="services-editor-head">
+                <span>Services</span>
+                <button type="button" class="secondary" @click="store.addRegulatorServiceRow">+ Ajouter un service</button>
               </div>
+              <div v-for="(service, index) in store.regulatorCenterForm.services" :key="index" class="service-row">
+                <input v-model="service.name" placeholder="Nom du service (ex: Urgences)" />
+                <input v-model="service.description" placeholder="Description (optionnel)" />
+                <div class="service-beds">
+                  <label>
+                    Lits disponibles
+                    <input v-model.number="service.bedsAvailable" type="number" min="0" />
+                  </label>
+                  <label>
+                    Lits occupes
+                    <input v-model.number="service.bedsOccupied" type="number" min="0" />
+                  </label>
+                  <label>
+                    Hors service
+                    <input v-model.number="service.bedsOutOfService" type="number" min="0" />
+                  </label>
+                  <button type="button" class="ghost danger" @click="store.removeRegulatorServiceRow(index)">Retirer</button>
+                </div>
+              </div>
+              <p v-if="store.regulatorCenterForm.services.length === 0" class="muted">Aucun service ajoute.</p>
             </div>
 
             <div class="ca-modal-row2 ca-modal-row2--gps">
@@ -224,7 +249,7 @@
               <span class="ca-detail-val">{{ regionLabel(center.regionCode) }}</span>
             </div>
             <div class="ca-detail-field">
-              <span class="ca-detail-lbl">District</span>
+              <span class="ca-detail-lbl">Ville</span>
               <span class="ca-detail-val">{{ districtLabel(center.districtCode) }}</span>
             </div>
             <div class="ca-detail-field">
@@ -233,11 +258,17 @@
                 {{ centerLat(center) }}, {{ centerLon(center) }}
               </span>
             </div>
-            <div class="ca-detail-field">
+            <div class="ca-detail-field ca-detail-field--wide">
               <span class="ca-detail-lbl">Services</span>
-              <span class="ca-detail-val">
-                {{ center.services?.map(s => s.name).join(", ") || "–" }}
-              </span>
+              <span class="ca-detail-val" v-if="!center.services?.length">–</span>
+              <ul v-else class="ca-service-list">
+                <li v-for="(s, i) in center.services" :key="i">
+                  {{ s.name }}
+                  <span class="ca-service-beds">
+                    ({{ s.bedsAvailable || 0 }} dispo / {{ s.bedsOccupied || 0 }} occupe(s) / {{ s.bedsOutOfService || 0 }} hors service)
+                  </span>
+                </li>
+              </ul>
             </div>
             <div class="ca-detail-field">
               <span class="ca-detail-lbl">Statut approbation</span>
@@ -270,7 +301,9 @@
                 <option value="CHR">CHR</option>
                 <option value="CH">CH</option>
                 <option value="CHS">CHS</option>
-                <option value="CLINIQUE_PRIVEE">Clinique Privée</option>
+                <option value="CLINIQUE">Clinique</option>
+                <option value="POLYCLINIQUE">Polyclinique</option>
+                <option value="INFIRMERIE">Infirmerie</option>
                 <option value="CLCC">CLCC</option>
                 <option value="ESPC">ESPC</option>
                 <option value="CENTRE_SANTE">Centre de Santé</option>
@@ -298,10 +331,10 @@
               </select>
             </div>
             <div class="ca-form-row">
-              <label>District</label>
+              <label>Ville</label>
               <select v-model="store.centerAdminForm.districtCode">
                 <option value="">- Aucun -</option>
-                <option v-for="d in store.availableDistrictsForRegulatorCenter" :key="d.code" :value="d.code">
+                <option v-for="d in store.availableDistrictsForCenterAdminForm" :key="d.code" :value="d.code">
                   {{ d.code }} – {{ d.name }}
                 </option>
               </select>
@@ -311,8 +344,33 @@
               <input v-model="store.centerAdminForm.technicalPlatform" />
             </div>
             <div class="ca-form-row">
-              <label>Services (séparés par virgule)</label>
-              <input v-model="store.centerAdminForm.servicesCsv" placeholder="Médecine générale, Pédiatrie…" />
+              <label>Services</label>
+              <div class="services-editor">
+                <div class="services-editor-head">
+                  <span>{{ store.centerAdminForm.services.length }} service(s)</span>
+                  <button type="button" class="secondary" @click="store.addCenterAdminServiceRow">+ Ajouter un service</button>
+                </div>
+                <div v-for="(service, index) in store.centerAdminForm.services" :key="index" class="service-row">
+                  <input v-model="service.name" placeholder="Nom du service (ex: Urgences)" />
+                  <input v-model="service.description" placeholder="Description (optionnel)" />
+                  <div class="service-beds">
+                    <label>
+                      Lits disponibles
+                      <input v-model.number="service.bedsAvailable" type="number" min="0" />
+                    </label>
+                    <label>
+                      Lits occupes
+                      <input v-model.number="service.bedsOccupied" type="number" min="0" />
+                    </label>
+                    <label>
+                      Hors service
+                      <input v-model.number="service.bedsOutOfService" type="number" min="0" />
+                    </label>
+                    <button type="button" class="ghost danger" @click="store.removeCenterAdminServiceRow(index)">Retirer</button>
+                  </div>
+                </div>
+                <p v-if="store.centerAdminForm.services.length === 0" class="muted">Aucun service ajoute.</p>
+              </div>
             </div>
             <div class="ca-form-row ca-form-row--two">
               <div>
@@ -418,7 +476,7 @@ const centerLon = (c) => c.location?.coordinates?.[0] ?? c.longitude ?? "–";
 function formatLevel(level) {
   const map = {
     CHU: "CHU", CHR: "CHR", CH: "CH", CHS: "CHS",
-    CLINIQUE_PRIVEE: "Clinique Privée", CLCC: "CLCC", ESPC: "ESPC",
+    CLINIQUE: "Clinique", POLYCLINIQUE: "Polyclinique", INFIRMERIE: "Infirmerie", CLCC: "CLCC", ESPC: "ESPC",
     CENTRE_SANTE: "Centre de Santé", SSR: "SSR", EHPAD_USLD: "EHPAD/USLD",
     CENTRE_RADIOTHERAPIE: "Radiothérapie", CENTRE_CARDIOLOGIE: "Cardiologie",
   };
@@ -778,6 +836,60 @@ button.danger {
 }
 
 button.danger:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Services editor (create modal + edit form) */
+.services-editor {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1.5px solid #cfe2f7;
+  border-radius: 10px;
+  background: #f7faff;
+}
+.services-editor-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 700;
+  color: #1a3a6e;
+  font-size: 0.85rem;
+}
+.service-row {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  background: #fff;
+  border: 1px solid #e0e8f5;
+  border-radius: 8px;
+}
+.service-row input {
+  padding: 8px 12px;
+  border: 1.5px solid #cfe2f7;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  background: #f7faff;
+}
+.service-beds {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+}
+.service-beds label {
+  display: grid;
+  gap: 4px;
+  font-size: 0.72rem;
+  color: #5a7aa8;
+  font-weight: 600;
+}
+.service-beds input {
+  width: 90px;
+}
+
+.ca-detail-field--wide { grid-column: 1 / -1; }
+.ca-service-list { margin: 0; padding-left: 18px; }
+.ca-service-list li { font-size: 0.9rem; color: #1a3a6e; font-weight: 600; }
+.ca-service-beds { font-size: 0.78rem; color: #5a7aa8; font-weight: 500; }
 
 /* Pagination */
 .ca-pagination {

@@ -63,7 +63,7 @@ const _store = (() => {
     const requested = String(tabCandidate || "").trim();
     // DEVELOPER accède à tous les onglets sans restriction
     if (isDeveloper.value) {
-      const allTabs = ["overview", "nearby", "emergency-alerts", "security-alerts", "complaints", "evaluations", "my-center", "settings", "imports", "roles", "analytics"];
+      const allTabs = ["overview", "nearby", "emergency-alerts", "security-alerts", "complaints", "suggestions", "evaluations", "my-center", "referrals", "settings", "imports", "roles", "analytics"];
       return allTabs.includes(requested) ? requested : "overview";
     }
     if (isChef.value) {
@@ -71,13 +71,17 @@ const _store = (() => {
         return "evaluations";
       if (requested === "complaints" && hasApprovedChefCenter.value)
         return "complaints";
+      if (requested === "suggestions" && hasApprovedChefCenter.value)
+        return "suggestions";
+      if (requested === "referrals" && hasApprovedChefCenter.value)
+        return "referrals";
       return "my-center";
     }
     const allowed = ["overview", "nearby"];
     if (isEmergencyResponder.value) allowed.push("emergency-alerts");
     if (isSecurityResponder.value) allowed.push("security-alerts");
     if (isRegulator.value)
-      allowed.push("complaints", "evaluations", "settings", "imports", "roles", "analytics");
+      allowed.push("complaints", "suggestions", "evaluations", "settings", "imports", "roles", "analytics");
     if (hasAnyRole(["NATIONAL", "REGULATOR"])) allowed.push("roles");
     if (canManageUsers.value) allowed.push("settings");
     if (allowed.includes(requested)) return requested;
@@ -143,6 +147,29 @@ const _store = (() => {
   const complaintStepNotes = reactive({});
   const complaintAdminError = ref("");
   const complaintSuccess = ref("");
+
+  // ─── Suggestions ─────────────────────────────────────────────────────────────
+  const suggestionsList = ref([]);
+  const suggestionSummary = ref(null);
+  const suggestionError = ref("");
+  const suggestionSuccess = ref("");
+  const suggestionActionLoadingId = ref("");
+  let suggestionRefreshTimer = null;
+
+  // ─── App settings (developer) ────────────────────────────────────────────────
+  const appSettings = ref({ centerReviewsEnabled: true });
+  const appSettingsLoading = ref(false);
+  const appSettingsError = ref("");
+  const appSettingsSuccess = ref("");
+
+  // ─── Module access per role (developer) ──────────────────────────────────────
+  const moduleDefinitions = ref([]);
+  const roleDefinitions = ref([]);
+  const appDefinitions = ref([]);
+  const moduleSettingsApp = ref("mobile");
+  const moduleSettingsMatrix = ref({});
+  const moduleSettingsLoading = ref(false);
+  const moduleSettingsError = ref("");
 
   const PAGE_SIZE = 5;
   const complaintsPage = ref(1);
@@ -401,6 +428,87 @@ const _store = (() => {
     return `https://maps.google.com/maps?q=${lat},${lon}&z=15&output=embed`;
   }
 
+  // ─── Referrals (orientations de patients) ──────────────────────────────────
+  const incomingReferrals = ref([]);
+  const referralsError = ref("");
+  const referralsSuccess = ref("");
+  const referralActionLoadingId = ref("");
+  let referralsRefreshTimer = null;
+
+  const pendingReferrals = computed(() =>
+    incomingReferrals.value.filter((r) => r.status === "PENDING")
+  );
+  const receivedReferrals = computed(() =>
+    incomingReferrals.value.filter((r) => r.status === "RECEIVED")
+  );
+  const rejectedReferrals = computed(() =>
+    incomingReferrals.value.filter((r) => r.status === "REJECTED")
+  );
+
+  async function fetchIncomingReferrals() {
+    referralsError.value = "";
+    try {
+      incomingReferrals.value = await apiFetch("/referrals/incoming", { token: auth.state.token });
+    } catch (err) {
+      referralsError.value = err.message;
+    }
+  }
+
+  async function confirmReferralReception(item) {
+    referralsError.value = "";
+    referralsSuccess.value = "";
+    referralActionLoadingId.value = String(item.id);
+    try {
+      await apiFetch(`/referrals/${item.id}/confirm`, {
+        token: auth.state.token,
+        method: "POST",
+      });
+      referralsSuccess.value = "Reception du patient confirmee";
+      await fetchIncomingReferrals();
+    } catch (err) {
+      referralsError.value = err.message;
+    } finally {
+      referralActionLoadingId.value = "";
+    }
+  }
+
+  async function rejectReferralReception(item, reason) {
+    const trimmedReason = String(reason || "").trim();
+    if (!trimmedReason) {
+      referralsError.value = "Indiquez un motif de rejet";
+      return;
+    }
+    referralsError.value = "";
+    referralsSuccess.value = "";
+    referralActionLoadingId.value = String(item.id);
+    try {
+      await apiFetch(`/referrals/${item.id}/reject`, {
+        token: auth.state.token,
+        method: "POST",
+        body: { reason: trimmedReason },
+      });
+      referralsSuccess.value = "Orientation rejetee";
+      await fetchIncomingReferrals();
+    } catch (err) {
+      referralsError.value = err.message;
+    } finally {
+      referralActionLoadingId.value = "";
+    }
+  }
+
+  function startReferralsAutoRefresh() {
+    if (referralsRefreshTimer) return;
+    referralsRefreshTimer = setInterval(() => {
+      fetchIncomingReferrals().catch(() => {});
+    }, 20000);
+  }
+
+  function stopReferralsAutoRefresh() {
+    if (!referralsRefreshTimer) return;
+    clearInterval(referralsRefreshTimer);
+    referralsRefreshTimer = null;
+  }
+
   // ─── Chef center ─────────────────────────────────────────────────────────────
   const myCenterId = ref("");
   const chefForm = reactive({
@@ -412,12 +520,20 @@ const _store = (() => {
     regionCode: "",
     districtCode: "",
     technicalPlatform: "",
-    servicesCsv: "",
+    services: [],
     latitude: "",
     longitude: "",
   });
   const chefError = ref("");
   const chefSuccess = ref("");
+
+  const availableDistrictsForChef = computed(() => {
+    const r = String(chefForm.regionCode || "").trim().toUpperCase();
+    if (!r) return [];
+    return districts.value.filter(
+      (d) => String(d.regionCode || "").trim().toUpperCase() === r
+    );
+  });
 
   // ─── Regulator center ────────────────────────────────────────────────────────
   const regulatorCenterForm = reactive({
@@ -429,7 +545,7 @@ const _store = (() => {
     regionCode: "",
     districtCode: "",
     technicalPlatform: "",
-    servicesCsv: "",
+    services: [],
     latitude: "",
     longitude: "",
   });
@@ -569,7 +685,7 @@ const _store = (() => {
     regionCode: "",
     districtCode: "",
     technicalPlatform: "",
-    servicesCsv: "",
+    services: [],
     latitude: "",
     longitude: "",
   });
@@ -660,6 +776,13 @@ const _store = (() => {
   });
   const availableDistrictsForCenterAdminFilter = computed(() => {
     const r = String(centersAdminRegionFilter.value || "").trim().toUpperCase();
+    if (!r) return districts.value;
+    return districts.value.filter(
+      (d) => String(d.regionCode || "").trim().toUpperCase() === r
+    );
+  });
+  const availableDistrictsForCenterAdminForm = computed(() => {
+    const r = String(centerAdminForm.regionCode || "").trim().toUpperCase();
     if (!r) return districts.value;
     return districts.value.filter(
       (d) => String(d.regionCode || "").trim().toUpperCase() === r
@@ -791,7 +914,9 @@ const _store = (() => {
   }
 
   function formatLevel(level) {
-    if (level === "CLINIQUE_PRIVEE") return "Clinique privee";
+    if (level === "CLINIQUE") return "Clinique";
+    if (level === "POLYCLINIQUE") return "Polyclinique";
+    if (level === "INFIRMERIE") return "Infirmerie";
     if (level === "CENTRE_SANTE") return "Centre de sante";
     if (level === "EHPAD_USLD") return "EHPAD / USLD";
     if (level === "CENTRE_RADIOTHERAPIE") return "Centre de radiotherapie";
@@ -1054,6 +1179,34 @@ const _store = (() => {
     return csv.split(",").map((s) => s.trim()).filter(Boolean).map((name) => ({ name }));
   }
 
+  function createEmptyServiceRow() {
+    return { name: "", description: "", bedsAvailable: 0, bedsOccupied: 0, bedsOutOfService: 0 };
+  }
+
+  function servicesFromCenter(center) {
+    return Array.isArray(center?.services)
+      ? center.services.map((s) => ({
+          name: s.name || "",
+          description: s.description || "",
+          bedsAvailable: Number(s.bedsAvailable) || 0,
+          bedsOccupied: Number(s.bedsOccupied) || 0,
+          bedsOutOfService: Number(s.bedsOutOfService) || 0,
+        }))
+      : [];
+  }
+
+  function servicesToPayload(services) {
+    return (Array.isArray(services) ? services : [])
+      .filter((s) => String(s.name || "").trim())
+      .map((s) => ({
+        name: String(s.name || "").trim(),
+        description: String(s.description || "").trim() || null,
+        bedsAvailable: Number(s.bedsAvailable) || 0,
+        bedsOccupied: Number(s.bedsOccupied) || 0,
+        bedsOutOfService: Number(s.bedsOutOfService) || 0,
+      }));
+  }
+
   function parseCsvLine(line, delimiter) {
     const cells = [];
     let current = "";
@@ -1128,10 +1281,12 @@ const _store = (() => {
     if (s.includes("EHPAD") || s.includes("USLD")) return "EHPAD_USLD";
     if (s.includes("RADIOTHERAPIE")) return "CENTRE_RADIOTHERAPIE";
     if (s.includes("CARDIOLOGIE")) return "CENTRE_CARDIOLOGIE";
+    if (s === "POLYCLINIQUE") return "POLYCLINIQUE";
+    if (s === "INFIRMERIE") return "INFIRMERIE";
     if (
-      ["CLINIQUE", "POLYCLINIQUE", "CABINET DENTAIRE", "CABINET OPTIQUE",
+      ["CLINIQUE", "CABINET DENTAIRE", "CABINET OPTIQUE",
        "CABINET MEDICAL", "LABORATOIRE", "INSTITUT SPECIALISE"].includes(s)
-    ) return "CLINIQUE_PRIVEE";
+    ) return "CLINIQUE";
     return "CENTRE_SANTE";
   }
 
@@ -1433,6 +1588,121 @@ const _store = (() => {
     }
   }
 
+  async function fetchSuggestions() {
+    suggestionError.value = "";
+    try {
+      suggestionsList.value = await apiFetch("/suggestions", { token: auth.state.token });
+    } catch (err) {
+      suggestionError.value = err.message;
+    }
+  }
+
+  async function fetchSuggestionSummary() {
+    suggestionError.value = "";
+    try {
+      suggestionSummary.value = await apiFetch("/suggestions/summary", { token: auth.state.token });
+    } catch (err) {
+      suggestionError.value = err.message;
+    }
+  }
+
+  async function markSuggestionRead(item) {
+    suggestionError.value = "";
+    suggestionSuccess.value = "";
+    suggestionActionLoadingId.value = String(item.id);
+    try {
+      await apiFetch(`/suggestions/${item.id}/read`, {
+        token: auth.state.token,
+        method: "PATCH",
+      });
+      suggestionSuccess.value = "Observation marquee comme lue";
+      await Promise.all([fetchSuggestions(), fetchSuggestionSummary()]);
+    } catch (err) {
+      suggestionError.value = err.message;
+    } finally {
+      suggestionActionLoadingId.value = "";
+    }
+  }
+
+  function startSuggestionAutoRefresh() {
+    if (suggestionRefreshTimer || !canSeeComplaintsPanel.value) return;
+    suggestionRefreshTimer = setInterval(() => {
+      fetchSuggestions().catch(() => {});
+      fetchSuggestionSummary().catch(() => {});
+    }, 15000);
+  }
+
+  function stopSuggestionAutoRefresh() {
+    if (!suggestionRefreshTimer) return;
+    clearInterval(suggestionRefreshTimer);
+    suggestionRefreshTimer = null;
+  }
+
+  async function fetchAppSettings() {
+    appSettingsError.value = "";
+    try {
+      appSettings.value = await apiFetch("/settings", { token: auth.state.token });
+    } catch (err) {
+      appSettingsError.value = err.message;
+    }
+  }
+
+  async function updateAppSetting(key, value) {
+    appSettingsError.value = "";
+    appSettingsSuccess.value = "";
+    appSettingsLoading.value = true;
+    try {
+      await apiFetch(`/settings/${key}`, {
+        token: auth.state.token,
+        method: "PATCH",
+        body: { value },
+      });
+      appSettings.value = { ...appSettings.value, [key]: value };
+      appSettingsSuccess.value = "Reglage mis a jour";
+    } catch (err) {
+      appSettingsError.value = err.message;
+    } finally {
+      appSettingsLoading.value = false;
+    }
+  }
+
+  async function fetchModuleSettings(appKey = moduleSettingsApp.value) {
+    moduleSettingsError.value = "";
+    try {
+      const data = await apiFetch(`/settings/modules?appKey=${encodeURIComponent(appKey)}`, { token: auth.state.token });
+      moduleDefinitions.value = data.modules || [];
+      roleDefinitions.value = data.roles || [];
+      appDefinitions.value = data.apps || [];
+      moduleSettingsApp.value = data.appKey || appKey;
+      moduleSettingsMatrix.value = data.matrix || {};
+    } catch (err) {
+      moduleSettingsError.value = err.message;
+    }
+  }
+
+  async function setModuleSettingsApp(appKey) {
+    moduleSettingsApp.value = appKey;
+    await fetchModuleSettings(appKey);
+  }
+
+  async function updateModuleSetting(moduleKey, role, enabled) {
+    moduleSettingsError.value = "";
+    moduleSettingsLoading.value = true;
+    try {
+      await apiFetch("/settings/modules", {
+        token: auth.state.token,
+        method: "PATCH",
+        body: { moduleKey, role, enabled, appKey: moduleSettingsApp.value },
+      });
+      if (!moduleSettingsMatrix.value[moduleKey]) moduleSettingsMatrix.value[moduleKey] = {};
+      moduleSettingsMatrix.value[moduleKey][role] = enabled;
+    } catch (err) {
+      moduleSettingsError.value = err.message;
+    } finally {
+      moduleSettingsLoading.value = false;
+    }
+  }
+
   // Chef center
   function loadChefCenterFromList() {
     if (!isChef.value) return;
@@ -1447,11 +1717,92 @@ const _store = (() => {
     chefForm.regionCode = center.regionCode || "";
     chefForm.districtCode = center.districtCode || "";
     chefForm.technicalPlatform = center.technicalPlatform || "";
-    chefForm.servicesCsv = Array.isArray(center.services)
-      ? center.services.map((s) => s.name).join(", ")
-      : "";
+    chefForm.services = servicesFromCenter(center);
     chefForm.latitude = Number(center.location?.coordinates?.[1]) || "";
     chefForm.longitude = Number(center.location?.coordinates?.[0]) || "";
+  }
+
+  const claimCodeInput = ref("");
+  const claimLoading = ref(false);
+  const claimError = ref("");
+  const claimNotFound = ref(false);
+
+  async function claimCenterByCode() {
+    const code = String(claimCodeInput.value || "").trim();
+    if (!code) {
+      claimError.value = "Entrez le code de votre etablissement";
+      return;
+    }
+    claimLoading.value = true;
+    claimError.value = "";
+    claimNotFound.value = false;
+    try {
+      await apiFetch("/centers/claim-by-code", { token: auth.state.token, method: "POST", body: { code } });
+      await fetchAllCenters();
+    } catch (err) {
+      if (err.status === 404) {
+        claimNotFound.value = true;
+      } else {
+        claimError.value = err.message;
+      }
+    } finally {
+      claimLoading.value = false;
+    }
+  }
+
+  function createWithClaimCode() {
+    chefForm.establishmentCode = String(claimCodeInput.value || "").trim();
+  }
+
+  const serviceActionLoadingName = ref("");
+  const serviceError = ref("");
+
+  async function adjustServiceBeds(serviceName, adjust) {
+    if (!myCenterId.value) return;
+    serviceError.value = "";
+    serviceActionLoadingName.value = serviceName;
+    try {
+      await apiFetch(`/centers/${myCenterId.value}/services/${encodeURIComponent(serviceName)}`, {
+        token: auth.state.token,
+        method: "PATCH",
+        body: { adjust },
+      });
+      await fetchAllCenters();
+    } catch (err) {
+      serviceError.value = err.message;
+    } finally {
+      serviceActionLoadingName.value = "";
+    }
+  }
+
+  async function updateServiceDetails(serviceName, fields) {
+    if (!myCenterId.value) return;
+    serviceError.value = "";
+    serviceActionLoadingName.value = serviceName;
+    try {
+      await apiFetch(`/centers/${myCenterId.value}/services/${encodeURIComponent(serviceName)}`, {
+        token: auth.state.token,
+        method: "PATCH",
+        body: fields,
+      });
+      await fetchAllCenters();
+    } catch (err) {
+      serviceError.value = err.message;
+    } finally {
+      serviceActionLoadingName.value = "";
+    }
+  }
+
+  function onChefRegionChange() {
+    chefForm.districtCode = "";
+  }
+
+  function addChefServiceRow() {
+    chefForm.services.push(createEmptyServiceRow());
+  }
+
+  function removeChefServiceRow(index) {
+    chefForm.services.splice(index, 1);
   }
 
   function setCurrentPosition() {
@@ -1484,7 +1835,7 @@ const _store = (() => {
         technicalPlatform: chefForm.technicalPlatform,
         latitude: Number(chefForm.latitude),
         longitude: Number(chefForm.longitude),
-        services: parseServicesCsv(chefForm.servicesCsv),
+        services: servicesToPayload(chefForm.services),
       };
       if (myCenterId.value) {
         await apiFetch(`/centers/${myCenterId.value}`, { token: auth.state.token, method: "PUT", body });
@@ -1511,9 +1862,17 @@ const _store = (() => {
     regulatorCenterForm.regionCode = "";
     regulatorCenterForm.districtCode = "";
     regulatorCenterForm.technicalPlatform = "";
-    regulatorCenterForm.servicesCsv = "";
+    regulatorCenterForm.services = [];
     regulatorCenterForm.latitude = "";
     regulatorCenterForm.longitude = "";
+  }
+
+  function addRegulatorServiceRow() {
+    regulatorCenterForm.services.push(createEmptyServiceRow());
+  }
+
+  function removeRegulatorServiceRow(index) {
+    regulatorCenterForm.services.splice(index, 1);
   }
 
   async function setRegulatorCurrentPosition() {
@@ -1545,7 +1904,7 @@ const _store = (() => {
           technicalPlatform: regulatorCenterForm.technicalPlatform,
           latitude: Number(regulatorCenterForm.latitude),
           longitude: Number(regulatorCenterForm.longitude),
-          services: parseServicesCsv(regulatorCenterForm.servicesCsv),
+          services: servicesToPayload(regulatorCenterForm.services),
         },
       });
       regulatorCenterSuccess.value = "Centre cree et envoye en validation";
@@ -1578,13 +1937,19 @@ const _store = (() => {
     centerAdminForm.regionCode = center.regionCode || "";
     centerAdminForm.districtCode = center.districtCode || "";
     centerAdminForm.technicalPlatform = center.technicalPlatform || "";
-    centerAdminForm.servicesCsv = Array.isArray(center.services)
-      ? center.services.map((s) => s.name).join(", ")
-      : "";
+    centerAdminForm.services = servicesFromCenter(center);
     centerAdminForm.latitude = Number(center.location?.coordinates?.[1]) || "";
     centerAdminForm.longitude = Number(center.location?.coordinates?.[0]) || "";
     centersAdminError.value = "";
     centersAdminSuccess.value = "";
+  }
+
+  function addCenterAdminServiceRow() {
+    centerAdminForm.services.push(createEmptyServiceRow());
+  }
+
+  function removeCenterAdminServiceRow(index) {
+    centerAdminForm.services.splice(index, 1);
   }
 
   function cancelEditCenterByRegulator() {
@@ -1611,7 +1976,7 @@ const _store = (() => {
           technicalPlatform: centerAdminForm.technicalPlatform,
           latitude: Number(centerAdminForm.latitude),
           longitude: Number(centerAdminForm.longitude),
-          services: parseServicesCsv(centerAdminForm.servicesCsv),
+          services: servicesToPayload(centerAdminForm.services),
         },
       });
       centersAdminSuccess.value = "Centre mis a jour";
@@ -2055,7 +2420,9 @@ const _store = (() => {
     return (
       level === "ESPC" ||
       level === "CENTRE_SANTE" ||
-      level === "CLINIQUE_PRIVEE" ||
+      level === "CLINIQUE" ||
+      level === "POLYCLINIQUE" ||
+      level === "INFIRMERIE" ||
       name.includes("ESPC") ||
       name.includes("PREMIER CONTACT") ||
       technicalPlatform.includes("ESPC") ||
@@ -2222,6 +2589,16 @@ const _store = (() => {
     filteredEvaluationCenters, evaluationPage, evaluationPageCount, paginatedEvaluationCenters,
     evaluationCoverage, satisfactionBreakdown, topRatedCenters,
     fetchComplaints, fetchComplaintSummary, setComplaintStatus, addComplaintExplanation,
+    // suggestions
+    suggestionsList, suggestionSummary, suggestionError, suggestionSuccess, suggestionActionLoadingId,
+    fetchSuggestions, fetchSuggestionSummary, markSuggestionRead,
+    startSuggestionAutoRefresh, stopSuggestionAutoRefresh,
+    // app settings
+    appSettings, appSettingsLoading, appSettingsError, appSettingsSuccess,
+    fetchAppSettings, updateAppSetting,
+    // module access per role
+    moduleDefinitions, roleDefinitions, appDefinitions, moduleSettingsApp, moduleSettingsMatrix, moduleSettingsLoading, moduleSettingsError,
+    fetchModuleSettings, updateModuleSetting, setModuleSettingsApp,
     // emergency
     emergencyAlerts, emergencyGeoDetails, emergencyCategory, emergencyPeriodFrom, emergencyPeriodTo,
     emergencyStepNotes, emergencyAlertsError, emergencyAlertsSuccess, emergencyCategoryMenu,
@@ -2236,13 +2613,23 @@ const _store = (() => {
     fetchSecurityAlerts, takeSecurityAlertInCharge, resolveSecurityAlert, closeSecurityAlert,
     formatSecurityAlertType, formatSecurityStatus, getSecurityStatusClass, getSecurityAlertCardClass,
     navigateToSecurityAlert, buildSecurityMapEmbedUrl,
+    // referrals
+    incomingReferrals, referralsError, referralsSuccess, referralActionLoadingId,
+    pendingReferrals, receivedReferrals, rejectedReferrals,
+    fetchIncomingReferrals, confirmReferralReception, rejectReferralReception,
+    startReferralsAutoRefresh, stopReferralsAutoRefresh,
     // chef
     myCenterId, chefForm, chefError, chefSuccess,
+    availableDistrictsForChef, onChefRegionChange,
+    addChefServiceRow, removeChefServiceRow,
     setCurrentPosition, saveMyCenter, loadChefCenterFromList,
+    claimCodeInput, claimLoading, claimError, claimNotFound,
+    claimCenterByCode, createWithClaimCode,
+    serviceActionLoadingName, serviceError, adjustServiceBeds, updateServiceDetails,
     // regulator center
     regulatorCenterForm, regulatorCenterError, regulatorCenterSuccess,
     setRegulatorCurrentPosition, createCenterByRegulator, onRegulatorRegionChange,
-    resetRegulatorCenterForm,
+    resetRegulatorCenterForm, addRegulatorServiceRow, removeRegulatorServiceRow,
     // centers admin
     pendingCenters, pendingCenterSearch, centersAdminSearch,
     centersAdminRegionFilter, centersAdminDistrictFilter,
@@ -2252,6 +2639,7 @@ const _store = (() => {
     filteredPendingCenters, pendingCentersPage, pendingCentersPageCount, paginatedPendingCenters,
     filteredCentersForAdmin, adminCentersPage, adminCentersPageCount, paginatedCentersForAdmin,
     toggleCenterAdminDetails, startEditCenterByRegulator, cancelEditCenterByRegulator,
+    addCenterAdminServiceRow, removeCenterAdminServiceRow,
     saveCenterByRegulator, toggleCenterActiveByRegulator, deleteCenterByRegulator,
     fetchPendingCenters, reviewCenter, approveAllPendingCenters,
     deleteAllCenters, deleteCentersConfirm, deleteCentersLoading, deleteCentersError, deleteCentersSuccess,
@@ -2261,6 +2649,7 @@ const _store = (() => {
     regionImportError, districtImportError, regionImportSuccess, districtImportSuccess,
     regionImportLoading, districtImportLoading,
     availableDistrictsForRegulatorCenter, availableDistrictsForCenterAdminFilter,
+    availableDistrictsForCenterAdminForm,
     availableDistrictsForUserAssignment, assignableCentersForUser,
     fetchRegions, fetchDistricts, createRegion, createDistrict,
     onRegionImportFileChange, onDistrictImportFileChange,

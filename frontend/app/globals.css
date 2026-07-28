@@ -1,0 +1,33 @@
+@import "tailwindcss";
+
+:root {
+  /* Bleu de marque YEFA Technologie (#1A56DB), teinte tres claire en fond d'app. */
+  --background: #cddbf7;
+  --foreground: #1e293b;
+  --brand: #1a56db;
+  --brand-dark: #1337a4;
+  --brand-light: #ebf1ff;
+}
+
+html {
+  /* Base plus grande : tous les text-xs/sm/base/... (en rem) suivent proportionnellement. */
+  font-size: 18px;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+}
+
+.leaflet-container {
+  width: 100%;
+  height: 100%;
+  border-radius: 1rem;
+}

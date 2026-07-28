@@ -6,7 +6,9 @@ const CENTER_LEVELS = [
   "CHR",
   "CH",
   "CHS",
-  "CLINIQUE_PRIVEE",
+  "CLINIQUE",
+  "POLYCLINIQUE",
+  "INFIRMERIE",
   "CLCC",
   "ESPC",
   "CENTRE_SANTE",
@@ -21,7 +23,10 @@ const CENTER_LEVEL_ALIASES = new Map([
   ["CENTRE HOSPITALIER REGIONAL", "CHR"],
   ["CENTRE HOSPITALIER", "CH"],
   ["CENTRE HOSPITALIER SPECIALISE", "CHS"],
-  ["CLINIQUE PRIVEE", "CLINIQUE_PRIVEE"],
+  ["CLINIQUE", "CLINIQUE"],
+  ["CLINIQUE PRIVEE", "CLINIQUE"],
+  ["POLYCLINIQUE", "POLYCLINIQUE"],
+  ["INFIRMERIE", "INFIRMERIE"],
   ["CENTRE DE LUTTE CONTRE LE CANCER", "CLCC"],
   ["ESPC", "ESPC"],
   ["ETABLISSEMENT SANITAIRE DE PREMIER CONTACT", "ESPC"],
@@ -308,7 +313,9 @@ function normalizeCenterLevel(value) {
   if (normalized === "CH" || normalized.includes(" CENTRE HOSPITALIER")) return "CH";
   if (normalized.includes("CHS")) return "CHS";
   if (normalized.includes("CLCC") || normalized.includes("LUTTE CONTRE LE CANCER")) return "CLCC";
-  if (normalized.includes("CLINIQUE")) return "CLINIQUE_PRIVEE";
+  if (normalized.includes("POLYCLINIQUE")) return "POLYCLINIQUE";
+  if (normalized.includes("INFIRMERIE")) return "INFIRMERIE";
+  if (normalized.includes("CLINIQUE")) return "CLINIQUE";
   if (normalized.includes("ESPC") || normalized.includes("PREMIER CONTACT")) return "ESPC";
   if (normalized.includes("CENTRE DE SANTE")) return "CENTRE_SANTE";
   if (normalized.includes("SSR") || normalized.includes("READAPTATION")) return "SSR";
@@ -353,6 +360,16 @@ function mapCenterRow(row) {
   };
 }
 
+function mapServiceRow(row) {
+  return {
+    name: row.name,
+    description: row.description,
+    bedsAvailable: Number(row.beds_available) || 0,
+    bedsOccupied: Number(row.beds_occupied) || 0,
+    bedsOutOfService: Number(row.beds_out_of_service) || 0,
+  };
+}
+
 function csvCell(value, delimiter = ",") {
   const text = String(value ?? "");
   const delimiterPattern = delimiter.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -374,13 +391,18 @@ function sendCsv(res, filename, headers, rows, options = {}) {
   return res.send(`\uFEFF${content}`);
 }
 
+function normalizeBedCount(value) {
+  const n = Math.trunc(Number(value));
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
 function normalizeServices(services) {
   if (typeof services === "string") {
     return services
       .split(",")
       .map((item) => item.trim())
       .filter(Boolean)
-      .map((name) => ({ name }));
+      .map((name) => ({ name, bedsAvailable: 0, bedsOccupied: 0, bedsOutOfService: 0 }));
   }
 
   if (!Array.isArray(services)) {
@@ -390,11 +412,14 @@ function normalizeServices(services) {
   return services
     .map((service) => {
       if (typeof service === "string") {
-        return { name: service.trim() };
+        return { name: service.trim(), bedsAvailable: 0, bedsOccupied: 0, bedsOutOfService: 0 };
       }
       return {
         name: typeof service?.name === "string" ? service.name.trim() : "",
-        description: typeof service?.description === "string" ? service.description.trim() : null
+        description: typeof service?.description === "string" ? service.description.trim() : null,
+        bedsAvailable: normalizeBedCount(service?.bedsAvailable),
+        bedsOccupied: normalizeBedCount(service?.bedsOccupied),
+        bedsOutOfService: normalizeBedCount(service?.bedsOutOfService)
       };
     })
     .filter((service) => service.name.length > 0);
@@ -441,10 +466,10 @@ async function insertCenterWithServices(client, payload, createdBy, approvalStat
   for (const service of services) {
     await client.query(
       `
-        INSERT INTO health_center_services (center_id, name, description)
-        VALUES ($1, $2, $3);
+        INSERT INTO health_center_services (center_id, name, description, beds_available, beds_occupied, beds_out_of_service)
+        VALUES ($1, $2, $3, $4, $5, $6);
       `,
-      [center.id, service.name, service.description || null]
+      [center.id, service.name, service.description || null, service.bedsAvailable, service.bedsOccupied, service.bedsOutOfService]
     );
   }
 
@@ -480,7 +505,7 @@ export async function createCenter(req, res) {
   if (level && !normalizedLevel) {
     return res.status(400).json({
       message:
-        "level invalide. Valeurs: CHU, CHR, CH, CHS, CLINIQUE_PRIVEE, CLCC, ESPC, CENTRE_SANTE, SSR, EHPAD_USLD, CENTRE_RADIOTHERAPIE, CENTRE_CARDIOLOGIE"
+        "level invalide. Valeurs: CHU, CHR, CH, CHS, CLINIQUE, POLYCLINIQUE, INFIRMERIE, CLCC, ESPC, CENTRE_SANTE, SSR, EHPAD_USLD, CENTRE_RADIOTHERAPIE, CENTRE_CARDIOLOGIE"
     });
   }
 
@@ -566,9 +591,87 @@ export async function createCenter(req, res) {
   }
 }
 
+export async function claimCenterByCode(req, res) {
+  const normalizedCode = normalizeEstablishmentCode(
+    typeof req.body?.code === "string" ? req.body.code : ""
+  );
+  if (!normalizedCode) {
+    return res.status(400).json({ message: "Code etablissement requis" });
+  }
+
+  const found = await pool.query(
+    `
+      SELECT hc.id, hc.created_by, u.role AS creator_role
+      FROM health_centers hc
+      JOIN users u ON u.id = hc.created_by
+      WHERE upper(hc.establishment_code) = $1
+      LIMIT 1;
+    `,
+    [normalizedCode]
+  );
+
+  if (found.rowCount === 0) {
+    return res.status(404).json({ found: false, message: "Aucun centre trouve avec ce code." });
+  }
+
+  const target = found.rows[0];
+  const requesterId = Number(req.user.id);
+
+  if (Number(target.created_by) === requesterId) {
+    const mine = await pool.query(
+      `SELECT id, name, address, establishment_code, level, establishment_type, technical_platform,
+              region_code, district_code, latitude, longitude, created_by, approval_status,
+              created_at, updated_at
+       FROM health_centers WHERE id = $1 LIMIT 1;`,
+      [target.id]
+    );
+    return res.json({ found: true, claimed: false, alreadyMine: true, center: mapCenterRow(mine.rows[0]) });
+  }
+
+  const existingOwn = await pool.query(
+    `SELECT id FROM health_centers WHERE created_by = $1 LIMIT 1;`,
+    [requesterId]
+  );
+  if (existingOwn.rowCount > 0) {
+    return res.status(409).json({
+      message: "Vous gerez deja un centre. Utilisez la modification de votre centre."
+    });
+  }
+
+  const creatorRole = String(target.creator_role || "").toUpperCase();
+  if (!isAdminRole(creatorRole)) {
+    return res.status(409).json({
+      found: true,
+      claimed: false,
+      message: "Ce centre est deja gere par un autre compte."
+    });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const updated = await client.query(
+      `UPDATE health_centers
+       SET created_by = $2, updated_at = NOW()
+       WHERE id = $1
+       RETURNING id, name, address, establishment_code, level, establishment_type, technical_platform,
+                 region_code, district_code, latitude, longitude, created_by, approval_status,
+                 created_at, updated_at;`,
+      [target.id, requesterId]
+    );
+    await client.query("COMMIT");
+    return res.json({ found: true, claimed: true, center: mapCenterRow(updated.rows[0]) });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 export async function addService(req, res) {
   const { id } = req.params;
-  const { name, description } = req.body;
+  const { name, description, bedsAvailable, bedsOccupied, bedsOutOfService } = req.body;
   const centerId = Number(id);
 
   if (!name) {
@@ -599,10 +702,17 @@ export async function addService(req, res) {
 
   await pool.query(
     `
-      INSERT INTO health_center_services (center_id, name, description)
-      VALUES ($1, $2, $3);
+      INSERT INTO health_center_services (center_id, name, description, beds_available, beds_occupied, beds_out_of_service)
+      VALUES ($1, $2, $3, $4, $5, $6);
     `,
-    [centerId, name.trim(), description?.trim() || null]
+    [
+      centerId,
+      name.trim(),
+      description?.trim() || null,
+      normalizeBedCount(bedsAvailable),
+      normalizeBedCount(bedsOccupied),
+      normalizeBedCount(bedsOutOfService)
+    ]
   );
 
   const fullResult = await pool.query(
@@ -621,7 +731,13 @@ export async function addService(req, res) {
         hc.approval_status,
         COALESCE((
           SELECT json_agg(
-            json_build_object('name', s.name, 'description', s.description)
+            json_build_object(
+              'name', s.name,
+              'description', s.description,
+              'bedsAvailable', s.beds_available,
+              'bedsOccupied', s.beds_occupied,
+              'bedsOutOfService', s.beds_out_of_service
+            )
             ORDER BY s.id
           )
           FROM health_center_services s
@@ -634,6 +750,76 @@ export async function addService(req, res) {
   );
 
   return res.json(mapCenterRow(fullResult.rows[0]));
+}
+
+export async function updateCenterService(req, res) {
+  const centerId = Number(req.params.id);
+  const serviceName = typeof req.params.serviceName === "string" ? req.params.serviceName.trim() : "";
+  if (!Number.isInteger(centerId) || centerId <= 0) {
+    return res.status(400).json({ message: "ID de centre invalide" });
+  }
+  if (!serviceName) {
+    return res.status(400).json({ message: "Nom de service invalide" });
+  }
+
+  const centerResult = await pool.query(
+    `SELECT id, created_by FROM health_centers WHERE id = $1 LIMIT 1;`,
+    [centerId]
+  );
+  if (centerResult.rowCount === 0) {
+    return res.status(404).json({ message: "Centre introuvable" });
+  }
+  const requesterIsOwner = String(centerResult.rows[0].created_by) === String(req.user.id);
+  if (!requesterIsOwner && !isAdminRole(req.user?.role)) {
+    return res.status(403).json({ message: "Vous ne pouvez modifier que vos centres" });
+  }
+
+  const serviceResult = await pool.query(
+    `SELECT id, name, description, beds_available, beds_occupied, beds_out_of_service
+     FROM health_center_services
+     WHERE center_id = $1 AND name = $2
+     LIMIT 1;`,
+    [centerId, serviceName]
+  );
+  if (serviceResult.rowCount === 0) {
+    return res.status(404).json({ message: "Service introuvable" });
+  }
+  const service = serviceResult.rows[0];
+
+  const adjust = typeof req.body?.adjust === "string" ? req.body.adjust : null;
+
+  if (adjust === "occupy" || adjust === "free") {
+    if (adjust === "occupy" && Number(service.beds_available) <= 0) {
+      return res.status(400).json({ message: "Aucune place disponible" });
+    }
+    if (adjust === "free" && Number(service.beds_occupied) <= 0) {
+      return res.status(400).json({ message: "Aucune place occupee a liberer" });
+    }
+    const delta = adjust === "occupy" ? 1 : -1;
+    const updated = await pool.query(
+      `UPDATE health_center_services
+       SET beds_available = beds_available - $2, beds_occupied = beds_occupied + $2
+       WHERE id = $1
+       RETURNING name, description, beds_available, beds_occupied, beds_out_of_service;`,
+      [service.id, delta]
+    );
+    return res.json({ success: true, service: mapServiceRow(updated.rows[0]) });
+  }
+
+  const nextName = typeof req.body?.name === "string" && req.body.name.trim() ? req.body.name.trim() : service.name;
+  const nextDescription = typeof req.body?.description === "string" ? req.body.description.trim() || null : service.description;
+  const nextAvailable = req.body?.bedsAvailable !== undefined ? normalizeBedCount(req.body.bedsAvailable) : service.beds_available;
+  const nextOccupied = req.body?.bedsOccupied !== undefined ? normalizeBedCount(req.body.bedsOccupied) : service.beds_occupied;
+  const nextOutOfService = req.body?.bedsOutOfService !== undefined ? normalizeBedCount(req.body.bedsOutOfService) : service.beds_out_of_service;
+
+  const updated = await pool.query(
+    `UPDATE health_center_services
+     SET name = $2, description = $3, beds_available = $4, beds_occupied = $5, beds_out_of_service = $6
+     WHERE id = $1
+     RETURNING name, description, beds_available, beds_occupied, beds_out_of_service;`,
+    [service.id, nextName, nextDescription, nextAvailable, nextOccupied, nextOutOfService]
+  );
+  return res.json({ success: true, service: mapServiceRow(updated.rows[0]) });
 }
 
 export async function getNearbyCenters(req, res) {
@@ -788,7 +974,13 @@ export async function getNearbyCenters(req, res) {
         ) AS my_satisfaction,
         COALESCE((
           SELECT json_agg(
-            json_build_object('name', s.name, 'description', s.description)
+            json_build_object(
+              'name', s.name,
+              'description', s.description,
+              'bedsAvailable', s.beds_available,
+              'bedsOccupied', s.beds_occupied,
+              'bedsOutOfService', s.beds_out_of_service
+            )
             ORDER BY s.id
           )
           FROM health_center_services s
@@ -873,7 +1065,13 @@ export async function getAllCenters(req, res) {
         ) AS my_satisfaction,
         COALESCE((
           SELECT json_agg(
-            json_build_object('name', s.name, 'description', s.description)
+            json_build_object(
+              'name', s.name,
+              'description', s.description,
+              'bedsAvailable', s.beds_available,
+              'bedsOccupied', s.beds_occupied,
+              'bedsOutOfService', s.beds_out_of_service
+            )
             ORDER BY s.id
           )
           FROM health_center_services s
@@ -911,7 +1109,7 @@ export async function exportEspcCenters(req, res) {
         ), '') AS services
       FROM health_centers hc
       WHERE
-        hc.level IN ('ESPC', 'CENTRE_SANTE', 'CLINIQUE_PRIVEE')
+        hc.level IN ('ESPC', 'CENTRE_SANTE', 'CLINIQUE', 'POLYCLINIQUE', 'INFIRMERIE')
         OR upper(hc.name) LIKE '%ESPC%'
         OR upper(hc.name) LIKE '%PREMIER CONTACT%'
         OR upper(coalesce(hc.technical_platform, '')) LIKE '%ESPC%'
@@ -959,7 +1157,7 @@ export async function getCentersSync(req, res) {
   const sinceDate = sinceRaw ? new Date(sinceRaw) : null;
   const hasValidSince = sinceDate instanceof Date && !Number.isNaN(sinceDate?.getTime?.());
   const params = [viewerId];
-  const whereParts = ["hc.is_active = TRUE", "hc.approval_status = 'APPROVED'"];
+  const whereParts = hasValidSince ? [] : ["hc.is_active = TRUE", "hc.approval_status = 'APPROVED'"];
 
   if (hasValidSince) {
     whereParts.push(`hc.updated_at > $${params.length + 1}`);
@@ -1018,7 +1216,13 @@ export async function getCentersSync(req, res) {
         ) AS my_satisfaction,
         COALESCE((
           SELECT json_agg(
-            json_build_object('name', s.name, 'description', s.description)
+            json_build_object(
+              'name', s.name,
+              'description', s.description,
+              'bedsAvailable', s.beds_available,
+              'bedsOccupied', s.beds_occupied,
+              'bedsOutOfService', s.beds_out_of_service
+            )
             ORDER BY s.id
           )
           FROM health_center_services s
@@ -1086,7 +1290,7 @@ export async function importCenters(req, res) {
       errors.push({
         index,
         message:
-          "level invalide. Valeurs: CHU, CHR, CH, CHS, CLINIQUE_PRIVEE, CLCC, ESPC, CENTRE_SANTE, SSR, EHPAD_USLD, CENTRE_RADIOTHERAPIE, CENTRE_CARDIOLOGIE"
+          "level invalide. Valeurs: CHU, CHR, CH, CHS, CLINIQUE, POLYCLINIQUE, INFIRMERIE, CLCC, ESPC, CENTRE_SANTE, SSR, EHPAD_USLD, CENTRE_RADIOTHERAPIE, CENTRE_CARDIOLOGIE"
       });
       return;
     }
@@ -1314,7 +1518,8 @@ export async function updateCenter(req, res) {
 
     const owned = await client.query(
       `
-        SELECT id
+        SELECT id, name, address, establishment_code, level, establishment_type,
+               region_code, district_code, latitude, longitude
         FROM health_centers
         WHERE id = $1 AND created_by = $2
         LIMIT 1;
@@ -1325,6 +1530,20 @@ export async function updateCenter(req, res) {
       await client.query("ROLLBACK");
       return res.status(403).json({ message: "Vous ne pouvez modifier que votre centre" });
     }
+
+    // Plateau technique, services et places sont modifiables sans repasser par la validation
+    // centrale ; seuls les champs identitaires/de classification ci-dessous la declenchent.
+    const existing = owned.rows[0];
+    const sensitiveFieldsChanged =
+      String(existing.name || "") !== name.trim() ||
+      String(existing.address || "") !== address.trim() ||
+      String(existing.establishment_code || "") !== String(normalizedCode || "") ||
+      String(existing.level || "") !== normalizedLevel ||
+      String(existing.establishment_type || "") !== normalizedType ||
+      String(existing.region_code || "") !== normalizedRegionCode ||
+      String(existing.district_code || "") !== String(normalizedDistrictCode || "") ||
+      Number(existing.latitude) !== lat ||
+      Number(existing.longitude) !== lon;
 
     await client.query(
       `
@@ -1340,10 +1559,8 @@ export async function updateCenter(req, res) {
           district_code = $9,
           latitude = $10,
           longitude = $11,
-          approval_status = 'PENDING',
-          approved_by = NULL,
-          approved_at = NULL,
           updated_at = NOW()
+          ${sensitiveFieldsChanged ? ", approval_status = 'PENDING', approved_by = NULL, approved_at = NULL" : ""}
         WHERE id = $1;
       `,
       [
@@ -1366,10 +1583,10 @@ export async function updateCenter(req, res) {
     for (const service of normalizedServices) {
       await client.query(
         `
-          INSERT INTO health_center_services (center_id, name, description)
-          VALUES ($1, $2, $3);
+          INSERT INTO health_center_services (center_id, name, description, beds_available, beds_occupied, beds_out_of_service)
+          VALUES ($1, $2, $3, $4, $5, $6);
         `,
-        [centerId, service.name, service.description || null]
+        [centerId, service.name, service.description || null, service.bedsAvailable, service.bedsOccupied, service.bedsOutOfService]
       );
     }
 
@@ -1391,7 +1608,13 @@ export async function updateCenter(req, res) {
           hc.approval_status,
           COALESCE((
             SELECT json_agg(
-              json_build_object('name', s.name, 'description', s.description)
+              json_build_object(
+              'name', s.name,
+              'description', s.description,
+              'bedsAvailable', s.beds_available,
+              'bedsOccupied', s.beds_occupied,
+              'bedsOutOfService', s.beds_out_of_service
+            )
               ORDER BY s.id
             )
             FROM health_center_services s
@@ -1509,10 +1732,10 @@ export async function updateCenterByAdmin(req, res) {
     for (const service of normalizedServices) {
       await client.query(
         `
-          INSERT INTO health_center_services (center_id, name, description)
-          VALUES ($1, $2, $3);
+          INSERT INTO health_center_services (center_id, name, description, beds_available, beds_occupied, beds_out_of_service)
+          VALUES ($1, $2, $3, $4, $5, $6);
         `,
-        [centerId, service.name, service.description || null]
+        [centerId, service.name, service.description || null, service.bedsAvailable, service.bedsOccupied, service.bedsOutOfService]
       );
     }
 
@@ -1535,7 +1758,13 @@ export async function updateCenterByAdmin(req, res) {
           hc.is_active,
           COALESCE((
             SELECT json_agg(
-              json_build_object('name', s.name, 'description', s.description)
+              json_build_object(
+              'name', s.name,
+              'description', s.description,
+              'bedsAvailable', s.beds_available,
+              'bedsOccupied', s.beds_occupied,
+              'bedsOutOfService', s.beds_out_of_service
+            )
               ORDER BY s.id
             )
             FROM health_center_services s
@@ -1701,7 +1930,13 @@ export async function listPendingCenters(req, res) {
         hc.approval_status,
         COALESCE((
           SELECT json_agg(
-            json_build_object('name', s.name, 'description', s.description)
+            json_build_object(
+              'name', s.name,
+              'description', s.description,
+              'bedsAvailable', s.beds_available,
+              'bedsOccupied', s.beds_occupied,
+              'bedsOutOfService', s.beds_out_of_service
+            )
             ORDER BY s.id
           )
           FROM health_center_services s
@@ -1730,6 +1965,115 @@ export async function deleteAllCenters(req, res) {
     message: "Tous les centres ont ete supprimes",
     deletedCount: Number(deleted.rowCount || 0)
   });
+}
+
+export async function getMyVisits(req, res) {
+  const result = await pool.query(
+    `SELECT center_id, visited_at, confirmation_type
+     FROM center_visits
+     WHERE user_id = $1
+     ORDER BY visited_at DESC`,
+    [req.user.id]
+  );
+  return res.json({
+    visits: result.rows.map((r) => ({
+      centerId: String(r.center_id),
+      visitedAt: r.visited_at,
+      type: r.confirmation_type,
+    })),
+  });
+}
+
+export async function selfDeclareVisit(req, res) {
+  const centerId = Number(req.params.id);
+  if (!Number.isInteger(centerId) || centerId <= 0) {
+    return res.status(400).json({ message: "ID de centre invalide" });
+  }
+  const center = await pool.query(`SELECT id FROM health_centers WHERE id = $1 LIMIT 1`, [centerId]);
+  if (center.rowCount === 0) return res.status(404).json({ message: "Centre introuvable" });
+
+  await pool.query(
+    `INSERT INTO center_visits (center_id, user_id, confirmation_type)
+     VALUES ($1, $2, 'SELF_DECLARED')
+     ON CONFLICT (center_id, user_id)
+     DO NOTHING`,
+    [centerId, req.user.id]
+  );
+  return res.json({ success: true, message: "Visite declaree" });
+}
+
+export async function checkinByCode(req, res) {
+  const centerId = Number(req.params.id);
+  if (!Number.isInteger(centerId) || centerId <= 0) {
+    return res.status(400).json({ message: "ID de centre invalide" });
+  }
+  const code = typeof req.body?.code === "string" ? req.body.code.trim().toUpperCase() : "";
+  if (!code) return res.status(400).json({ message: "Code requis" });
+
+  const result = await pool.query(
+    `SELECT id FROM health_centers WHERE id = $1 AND UPPER(checkin_code) = $2 LIMIT 1`,
+    [centerId, code]
+  );
+  if (result.rowCount === 0) {
+    return res.status(400).json({ message: "Code incorrect" });
+  }
+
+  await pool.query(
+    `INSERT INTO center_visits (center_id, user_id, confirmation_type)
+     VALUES ($1, $2, 'CODE')
+     ON CONFLICT (center_id, user_id)
+     DO UPDATE SET visited_at = NOW(), confirmation_type = 'CODE'`,
+    [centerId, req.user.id]
+  );
+  return res.json({ success: true, message: "Visite enregistree" });
+}
+
+export async function confirmVisitByPro(req, res) {
+  const centerId = Number(req.params.id);
+  if (!Number.isInteger(centerId) || centerId <= 0) {
+    return res.status(400).json({ message: "ID de centre invalide" });
+  }
+
+  let patientId = Number(req.body?.patientId);
+  const patientPhone = typeof req.body?.patientPhone === "string" ? req.body.patientPhone.trim() : "";
+
+  if ((!Number.isInteger(patientId) || patientId <= 0) && patientPhone) {
+    const found = await pool.query(
+      `SELECT id FROM users WHERE phone_number = $1 LIMIT 1`,
+      [patientPhone]
+    );
+    if (found.rowCount === 0) return res.status(404).json({ message: "Aucun patient avec ce numero de telephone" });
+    patientId = found.rows[0].id;
+  }
+
+  if (!Number.isInteger(patientId) || patientId <= 0) {
+    return res.status(400).json({ message: "patientId ou patientPhone requis" });
+  }
+
+  const center = await pool.query(`SELECT id FROM health_centers WHERE id = $1 LIMIT 1`, [centerId]);
+  if (center.rowCount === 0) return res.status(404).json({ message: "Centre introuvable" });
+
+  await pool.query(
+    `INSERT INTO center_visits (center_id, user_id, confirmation_type, confirmed_by)
+     VALUES ($1, $2, 'PROFESSIONAL', $3)
+     ON CONFLICT (center_id, user_id)
+     DO UPDATE SET visited_at = NOW(), confirmation_type = 'PROFESSIONAL', confirmed_by = $3`,
+    [centerId, patientId, req.user.id]
+  );
+  return res.json({ success: true, message: "Visite confirmee" });
+}
+
+export async function getCheckinCode(req, res) {
+  const centerId = Number(req.params.id);
+  if (!Number.isInteger(centerId) || centerId <= 0) {
+    return res.status(400).json({ message: "ID de centre invalide" });
+  }
+  const result = await pool.query(
+    `SELECT checkin_code FROM health_centers WHERE id = $1 LIMIT 1`,
+    [centerId]
+  );
+  if (result.rowCount === 0) return res.status(404).json({ message: "Centre introuvable" });
+  return res.json({ checkinCode: result.rows[0].checkin_code });
 }
 
 export async function rateCenter(req, res) {
@@ -1764,6 +2108,14 @@ export async function rateCenter(req, res) {
   );
   if (center.rowCount === 0) {
     return res.status(404).json({ message: "Centre introuvable" });
+  }
+
+  const visit = await pool.query(
+    `SELECT id FROM center_visits WHERE center_id = $1 AND user_id = $2 LIMIT 1`,
+    [centerId, Number(req.user.id)]
+  );
+  if (visit.rowCount === 0) {
+    return res.status(403).json({ message: "Vous devez avoir visite ce centre pour laisser un avis" });
   }
 
   await pool.query(
@@ -2420,5 +2772,239 @@ export async function getMyComplaints(req, res) {
       updates: row.updates || []
     }))
   );
+}
+
+async function createSuggestionInternal(req, res, centerIdInput) {
+  if (isEtablissementRole(req.user.role)) {
+    return res.status(403).json({
+      message: "Un chef d'etablissement ne peut pas soumettre d'observation depuis son compte"
+    });
+  }
+
+  const centerId = Number(centerIdInput);
+  const message = typeof req.body?.message === "string" ? req.body.message.trim() : "";
+
+  if (!Number.isInteger(centerId) || centerId <= 0) {
+    return res.status(400).json({ message: "ID de centre invalide" });
+  }
+  if (!message) {
+    return res.status(400).json({ message: "message est obligatoire" });
+  }
+
+  const center = await pool.query("SELECT id FROM health_centers WHERE id = $1 LIMIT 1", [centerId]);
+  if (center.rowCount === 0) {
+    return res.status(404).json({ message: "Centre introuvable" });
+  }
+
+  const inserted = await pool.query(
+    `
+      INSERT INTO center_suggestions (center_id, user_id, message)
+      VALUES ($1, $2, $3)
+      RETURNING id, center_id, user_id, message, is_read, read_at, created_at;
+    `,
+    [centerId, Number(req.user.id), message]
+  );
+
+  const row = inserted.rows[0];
+  return res.status(201).json({
+    id: String(row.id),
+    centerId: String(row.center_id),
+    userId: String(row.user_id),
+    message: row.message,
+    isRead: row.is_read,
+    readAt: row.read_at,
+    createdAt: row.created_at
+  });
+}
+
+export async function createSuggestion(req, res) {
+  return createSuggestionInternal(req, res, req.params.id);
+}
+
+export async function getCenterSuggestions(req, res) {
+  if (!hasRequestRole(req, COMPLAINT_VIEW_ROLES)) {
+    return res.status(403).json({ message: "Acces refuse" });
+  }
+  const centerId = Number(req.params.id);
+  if (!Number.isInteger(centerId) || centerId <= 0) {
+    return res.status(400).json({ message: "ID de centre invalide" });
+  }
+
+  const scope = await getRequesterScope(req);
+  const access = await canViewCenterByScope(scope, centerId, { onlyApprovedForEstablishment: true });
+  if (!access.exists) {
+    return res.status(404).json({ message: "Centre introuvable" });
+  }
+  if (!access.allowed) {
+    return res.status(403).json({ message: "Acces refuse a ce centre" });
+  }
+
+  const suggestions = await pool.query(
+    `
+      SELECT
+        s.id, s.center_id, s.user_id, s.message, s.is_read, s.read_at, s.created_at,
+        u.full_name AS user_full_name
+      FROM center_suggestions s
+      INNER JOIN users u ON u.id = s.user_id
+      WHERE s.center_id = $1
+      ORDER BY s.created_at DESC;
+    `,
+    [centerId]
+  );
+
+  return res.json(
+    suggestions.rows.map((row) => ({
+      id: String(row.id),
+      centerId: String(row.center_id),
+      userId: String(row.user_id),
+      userFullName: row.user_full_name,
+      message: row.message,
+      isRead: row.is_read,
+      readAt: row.read_at,
+      createdAt: row.created_at
+    }))
+  );
+}
+
+export async function getAllSuggestions(req, res) {
+  if (!hasRequestRole(req, COMPLAINT_VIEW_ROLES)) {
+    return res.status(403).json({ message: "Acces refuse" });
+  }
+  const scope = await getRequesterScope(req);
+  const whereParts = [];
+  const params = [];
+  applyCenterScope(whereParts, params, scope, "hc", { onlyApprovedForEstablishment: true });
+  const whereClause = whereParts.length ? `WHERE ${whereParts.join(" AND ")}` : "";
+
+  const result = await pool.query(
+    `
+      SELECT
+        s.id, s.center_id, s.user_id, s.message, s.is_read, s.read_at, s.created_at,
+        u.full_name AS user_full_name,
+        hc.name AS center_name,
+        hc.establishment_code AS center_code
+      FROM center_suggestions s
+      INNER JOIN health_centers hc ON hc.id = s.center_id
+      INNER JOIN users u ON u.id = s.user_id
+      ${whereClause}
+      ORDER BY s.created_at DESC;
+    `,
+    params
+  );
+
+  return res.json(
+    result.rows.map((row) => ({
+      id: String(row.id),
+      centerId: String(row.center_id),
+      centerName: row.center_name || null,
+      centerCode: row.center_code || null,
+      userId: String(row.user_id),
+      userFullName: row.user_full_name,
+      message: row.message,
+      isRead: row.is_read,
+      readAt: row.read_at,
+      createdAt: row.created_at
+    }))
+  );
+}
+
+export async function getMySuggestions(req, res) {
+  const result = await pool.query(
+    `
+      SELECT
+        s.id, s.center_id, s.message, s.is_read, s.read_at, s.created_at,
+        hc.name AS center_name,
+        hc.establishment_code AS center_code
+      FROM center_suggestions s
+      LEFT JOIN health_centers hc ON hc.id = s.center_id
+      WHERE s.user_id = $1
+      ORDER BY s.created_at DESC;
+    `,
+    [Number(req.user.id)]
+  );
+
+  return res.json(
+    result.rows.map((row) => ({
+      id: String(row.id),
+      centerId: row.center_id == null ? null : String(row.center_id),
+      centerName: row.center_name || null,
+      centerCode: row.center_code || null,
+      message: row.message,
+      isRead: row.is_read,
+      readAt: row.read_at,
+      createdAt: row.created_at
+    }))
+  );
+}
+
+export async function getSuggestionsSummary(req, res) {
+  if (!hasRequestRole(req, COMPLAINT_VIEW_ROLES)) {
+    return res.status(403).json({ message: "Acces refuse" });
+  }
+  const scope = await getRequesterScope(req);
+  const whereParts = [];
+  const params = [];
+  applyCenterScope(whereParts, params, scope, "hc", { onlyApprovedForEstablishment: true });
+  const whereClause = whereParts.length ? `WHERE ${whereParts.join(" AND ")}` : "";
+
+  const result = await pool.query(
+    `
+      SELECT
+        COUNT(*)::int AS total,
+        COUNT(*) FILTER (WHERE s.is_read = FALSE)::int AS unread_count
+      FROM center_suggestions s
+      INNER JOIN health_centers hc ON hc.id = s.center_id
+      ${whereClause};
+    `,
+    params
+  );
+
+  const row = result.rows[0] || {};
+  return res.json({
+    total: Number(row.total || 0),
+    unreadCount: Number(row.unread_count || 0)
+  });
+}
+
+export async function markSuggestionRead(req, res) {
+  const suggestionId = Number(req.params.id);
+  if (!Number.isInteger(suggestionId) || suggestionId <= 0) {
+    return res.status(400).json({ message: "ID d'observation invalide" });
+  }
+
+  const found = await pool.query(
+    `SELECT id, center_id FROM center_suggestions WHERE id = $1 LIMIT 1`,
+    [suggestionId]
+  );
+  if (found.rowCount === 0) {
+    return res.status(404).json({ message: "Observation introuvable" });
+  }
+
+  const scope = await getRequesterScope(req);
+  const access = await canViewCenterByScope(scope, Number(found.rows[0].center_id));
+  if (!access.allowed) {
+    return res.status(403).json({ message: "Acces refuse a cette observation" });
+  }
+
+  const updated = await pool.query(
+    `
+      UPDATE center_suggestions
+      SET is_read = TRUE, read_at = NOW()
+      WHERE id = $1
+      RETURNING id, center_id, user_id, message, is_read, read_at, created_at;
+    `,
+    [suggestionId]
+  );
+
+  const row = updated.rows[0];
+  return res.json({
+    id: String(row.id),
+    centerId: String(row.center_id),
+    userId: String(row.user_id),
+    message: row.message,
+    isRead: row.is_read,
+    readAt: row.read_at,
+    createdAt: row.created_at
+  });
 }
 

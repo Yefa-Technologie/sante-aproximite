@@ -5,11 +5,15 @@ import { useAuth } from "./context/AuthContext";
 import { C, S } from "./theme";
 import { AuthScreen } from "./screens/AuthScreen";
 import { ProjectDigitalizationModal } from "./components/ProjectDigitalizationModal";
+import { DonationModal } from "./components/DonationModal";
+import { fetchModuleSettings, loadCachedModuleSettings } from "./storage/moduleSettings";
+import { registerForPushNotifications } from "./notifications";
 
 const APP_VERSION = "1.0.0";
 
 const MODULE_ICONS = {
   centers:   { uri: "https://img.icons8.com/color/96/hospital-3.png" },
+  referral:  { uri: "https://img.icons8.com/color/96/ambulance.png" },
   complaints:{ uri: "https://img.icons8.com/color/96/complaint.png" },
   tracking:  { uri: "https://img.icons8.com/color/96/time-machine.png" },
   chef:      { uri: "https://img.icons8.com/color/96/clinic.png" },
@@ -19,10 +23,12 @@ const MODULE_ICONS = {
   settings:  { uri: "https://img.icons8.com/color/96/settings.png" },
   developer: { uri: "https://img.icons8.com/color/96/filled-topic.png" },
   project:   { uri: "https://img.icons8.com/color/96/rocket--v1.png" },
+  suggestion:{ uri: "https://img.icons8.com/color/96/idea.png" },
 };
 
 const MODULE_COLORS = {
   nearby:              C.teal,
+  referral:            C.red,
   complaints:          C.primary,
   complaints_tracking: C.primary,
   chef:                C.teal,
@@ -31,6 +37,7 @@ const MODULE_COLORS = {
   security_alert:      "#7C3AED",
   security_ops:        C.primary,
   settings:            C.textMuted,
+  suggestions:         C.amber,
 };
 
 export function Root() {
@@ -38,11 +45,14 @@ export function Root() {
   const [currentTab, setCurrentTab] = useState("nearby");
   const [menuOpen, setMenuOpen] = useState(false);
   const [projectModalOpen, setProjectModalOpen] = useState(false);
+  const [donationModalOpen, setDonationModalOpen] = useState(false);
   const [supportActionsOpen, setSupportActionsOpen] = useState(false);
   const [chefCenterApprovalStatus, setChefCenterApprovalStatus] = useState(null);
   const [pendingSyncCount, setPendingSyncCount] = useState(0);
   const [syncNotice, setSyncNotice] = useState(null);
+  const [moduleSettings, setModuleSettings] = useState({});
   const autoSelectedResponderTab = useRef(false);
+  const autoSelectedChefTab = useRef(false);
   const pendingSyncCountRef = useRef(0);
   const syncNoticeTimeoutRef = useRef(null);
 
@@ -74,11 +84,39 @@ export function Root() {
     canManageCenters && (!chefCenterApprovalStatus || chefCenterApprovalStatus === "PENDING");
   const isEmergencyResponder  = hasAnyRole(["SAMU", "SAPEUR_POMPIER", "SAPPEUR_POMPIER", "PROTECTION_CIVILE"]);
   const isSecurityResponder   = hasAnyRole(["POLICE", "GENDARMERIE"]);
-  const isAnyResponder        = isEmergencyResponder || isSecurityResponder;
   const hasStandardMobileRole = hasAnyRole(["USER", "UTILISATEUR", "PATIENT"]);
-  const canSeeNearby          = !canManageCenters || chefHasPendingOrMissingCenter;
-  const canComplain           = (!canManageCenters || chefHasPendingOrMissingCenter) && (hasStandardMobileRole || !isAnyResponder);
-  const canSendEmergencyRequest = (!canManageCenters || chefHasPendingOrMissingCenter) && (hasStandardMobileRole || !isAnyResponder);
+
+  const userRoleGroups = [
+    ...(hasStandardMobileRole ? ["USER"] : []),
+    ...(canManageCenters ? ["ETABLISSEMENT"] : []),
+    ...(hasRole("SAMU") ? ["SAMU"] : []),
+    ...(hasAnyRole(["SAPEUR_POMPIER", "SAPPEUR_POMPIER"]) ? ["SAPEUR_POMPIER"] : []),
+    ...(hasRole("POLICE") ? ["POLICE"] : []),
+    ...(hasRole("GENDARMERIE") ? ["GENDARMERIE"] : []),
+    ...(hasRole("PROTECTION_CIVILE") ? ["PROTECTION_CIVILE"] : []),
+  ];
+
+  function isModuleEnabled(moduleKey) {
+    const roleMap = moduleSettings?.[moduleKey];
+    if (!roleMap || userRoleGroups.length === 0) return true;
+    return userRoleGroups.some((rg) => roleMap[rg] !== false);
+  }
+
+  const canSeeNearby          = isModuleEnabled("nearby");
+  const canPostComplaint      = isModuleEnabled("complaints");
+  const canTrackComplaints    = isModuleEnabled("complaints_tracking");
+  const canUseSuggestions     = isModuleEnabled("suggestions");
+  const canSendEmergencyRequest = isModuleEnabled("emergency");
+  const canSendSecurityAlert  = isModuleEnabled("security_alert");
+  const canUseReferralModule = (canManageCenters || isEmergencyResponder) && isModuleEnabled("referral");
+  const canSeeChefSpace       = canManageCenters && isModuleEnabled("chef");
+  const canSeeEmergencyAlerts = isEmergencyResponder && isModuleEnabled("alerts");
+  const canSeeSecurityOps     = isSecurityResponder && isModuleEnabled("security_ops");
+  const canSeeCenterSettings  = canManageCenterSettings && isModuleEnabled("settings");
+  const canSeeDonation        = isModuleEnabled("donation");
+  const canSeeContactDeveloper = isModuleEnabled("contact_developer");
+  const canSeeProject         = isModuleEnabled("project");
+  const canSeeClearCache      = isModuleEnabled("clear_cache");
 
   const emergencyAlertsLabel = hasRole("SAMU") && hasAnyRole(["SAPEUR_POMPIER", "SAPPEUR_POMPIER"])
     ? "Urgences sanitaires SAMU & Pompiers"
@@ -172,17 +210,49 @@ export function Root() {
   }, []);
 
   useEffect(() => {
-    if (canManageCenters) {
-      if (chefHasPendingOrMissingCenter) return;
+    if (!token) return;
+    registerForPushNotifications(token).catch(() => {});
+  }, [token]);
+
+  useEffect(() => {
+    if (!token) return;
+    let mounted = true;
+    async function refreshModuleSettings() {
+      try {
+        const fresh = await fetchModuleSettings(token);
+        if (mounted) setModuleSettings(fresh);
+      } catch {
+        // hors ligne : on garde les reglages en cache
+      }
+    }
+    (async () => {
+      const cached = await loadCachedModuleSettings();
+      if (mounted && Object.keys(cached).length > 0) setModuleSettings(cached);
+      await refreshModuleSettings();
+    })();
+    const interval = setInterval(refreshModuleSettings, 60000);
+    const sub = AppState.addEventListener("change", (state) => {
+      if (state === "active") refreshModuleSettings();
+    });
+    return () => {
+      mounted = false;
+      clearInterval(interval);
+      sub.remove();
+    };
+  }, [token]);
+
+  useEffect(() => {
+    if (canSeeChefSpace && !chefHasPendingOrMissingCenter && !autoSelectedChefTab.current) {
       setCurrentTab("chef");
+      autoSelectedChefTab.current = true;
       return;
     }
-    if (isSecurityResponder && !autoSelectedResponderTab.current) {
+    if (canSeeSecurityOps && !autoSelectedResponderTab.current) {
       setCurrentTab("security_ops");
       autoSelectedResponderTab.current = true;
       return;
     }
-    if (isEmergencyResponder && !autoSelectedResponderTab.current) {
+    if (canSeeEmergencyAlerts && !autoSelectedResponderTab.current) {
       setCurrentTab("alerts");
       autoSelectedResponderTab.current = true;
       return;
@@ -191,10 +261,13 @@ export function Root() {
       setCurrentTab("complaints");
       return;
     }
-    if (!canComplain && ["complaints", "complaints_tracking"].includes(currentTab)) {
+    if (!canPostComplaint && !canTrackComplaints && ["complaints", "complaints_tracking"].includes(currentTab)) {
       setCurrentTab("nearby");
     }
-  }, [canManageCenters, chefHasPendingOrMissingCenter, isEmergencyResponder, canSeeNearby, canComplain, currentTab]);
+  }, [
+    canSeeChefSpace, chefHasPendingOrMissingCenter, canSeeEmergencyAlerts, canSeeSecurityOps,
+    canSeeNearby, canPostComplaint, canTrackComplaints, currentTab
+  ]);
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -226,39 +299,47 @@ export function Root() {
       const { NearbyScreen } = require("./screens/NearbyScreen");
       return <NearbyScreen key={refreshKey} />;
     }
-    if (canComplain && currentTab === "complaints") {
+    if (canUseReferralModule && currentTab === "referral") {
+      const { ReferralCenterScreen } = require("./screens/ReferralCenterScreen");
+      return <ReferralCenterScreen key={refreshKey} />;
+    }
+    if (canPostComplaint && currentTab === "complaints") {
       const { ComplaintScreen } = require("./screens/ComplaintScreen");
       return <ComplaintScreen key={refreshKey} hideHistory />;
     }
-    if (canComplain && currentTab === "complaints_tracking") {
+    if (canTrackComplaints && currentTab === "complaints_tracking") {
       const { ComplaintScreen } = require("./screens/ComplaintScreen");
       return <ComplaintScreen key={refreshKey} hideForm />;
     }
-    if (currentTab === "chef") {
+    if (canUseSuggestions && currentTab === "suggestions") {
+      const { SuggestionScreen } = require("./screens/SuggestionScreen");
+      return <SuggestionScreen key={refreshKey} />;
+    }
+    if (canSeeChefSpace && currentTab === "chef") {
       const { ChefScreen } = require("./screens/ChefScreen");
       return <ChefScreen key={refreshKey} />;
     }
-    if (currentTab === "alerts") {
+    if (canSeeEmergencyAlerts && currentTab === "alerts") {
       const { EmergencyOpsScreen } = require("./screens/EmergencyOpsScreen");
       return <EmergencyOpsScreen key={refreshKey} />;
     }
-    if (currentTab === "security_ops") {
+    if (canSeeSecurityOps && currentTab === "security_ops") {
       const { SecurityAlertOpsScreen } = require("./screens/SecurityAlertOpsScreen");
       return <SecurityAlertOpsScreen key={refreshKey} />;
     }
-    if (currentTab === "emergency") {
+    if (canSendEmergencyRequest && currentTab === "emergency") {
       const { EmergencyScreen } = require("./screens/EmergencyScreen");
       return <EmergencyScreen key={refreshKey} />;
     }
-    if (currentTab === "security_alert") {
+    if (canSendSecurityAlert && currentTab === "security_alert") {
       const { SecurityAlertScreen } = require("./screens/SecurityAlertScreen");
       return <SecurityAlertScreen key={refreshKey} />;
     }
-    if (currentTab === "settings") {
+    if (canSeeCenterSettings && currentTab === "settings") {
       const { CenterSettingsScreen } = require("./screens/CenterSettingsScreen");
       return <CenterSettingsScreen key={refreshKey} />;
     }
-    if (currentTab === "contact_developer") {
+    if (canSeeContactDeveloper && currentTab === "contact_developer") {
       const { ContactDeveloperScreen } = require("./screens/ContactDeveloperScreen");
       return <ContactDeveloperScreen key={refreshKey} />;
     }
@@ -267,18 +348,21 @@ export function Root() {
 
   const tabs = [
     ...(canSeeNearby           ? [{ key: "nearby",              label: "Centres de sante",       icon: MODULE_ICONS.centers   }] : []),
-    ...(canComplain             ? [{ key: "complaints",          label: "Poser une plainte",      icon: MODULE_ICONS.complaints }] : []),
-    ...(canComplain             ? [{ key: "complaints_tracking", label: "Suivi des plaintes",     icon: MODULE_ICONS.tracking   }] : []),
-    ...(canManageCenters        ? [{ key: "chef",                label: "Espace chef",            icon: MODULE_ICONS.chef       }] : []),
-    ...(isEmergencyResponder    ? [{ key: "alerts",              label: emergencyAlertsLabel,     icon: MODULE_ICONS.alerts     }] : []),
-    ...(isSecurityResponder     ? [{ key: "security_ops",        label: "Urgences securitaires",   icon: MODULE_ICONS.security   }] : []),
+    ...(canUseReferralModule   ? [{ key: "referral",            label: "Reference malade",       icon: MODULE_ICONS.referral  }] : []),
+    ...(canPostComplaint        ? [{ key: "complaints",          label: "Poser une plainte",      icon: MODULE_ICONS.complaints }] : []),
+    ...(canTrackComplaints      ? [{ key: "complaints_tracking", label: "Suivi des plaintes",     icon: MODULE_ICONS.tracking   }] : []),
+    ...(canUseSuggestions       ? [{ key: "suggestions",         label: "Observation/Suggestion", icon: MODULE_ICONS.suggestion }] : []),
+    ...(canSeeChefSpace         ? [{ key: "chef",                label: "Espace chef",            icon: MODULE_ICONS.chef       }] : []),
+    ...(canSeeEmergencyAlerts   ? [{ key: "alerts",              label: emergencyAlertsLabel,     icon: MODULE_ICONS.alerts     }] : []),
+    ...(canSeeSecurityOps       ? [{ key: "security_ops",        label: "Urgences securitaires",   icon: MODULE_ICONS.security   }] : []),
     ...(canSendEmergencyRequest ? [{ key: "emergency",           label: "Urgence sanitaire",      icon: MODULE_ICONS.emergency  }] : []),
-    ...(canSendEmergencyRequest ? [{ key: "security_alert",      label: "Urgence securitaire",    icon: MODULE_ICONS.security   }] : []),
-    ...(canManageCenterSettings ? [{ key: "settings",            label: "Parametres centres",     icon: MODULE_ICONS.settings   }] : []),
+    ...(canSendSecurityAlert    ? [{ key: "security_alert",      label: "Urgence securitaire",    icon: MODULE_ICONS.security   }] : []),
+    ...(canSeeCenterSettings    ? [{ key: "settings",            label: "Parametres centres",     icon: MODULE_ICONS.settings   }] : []),
   ];
 
   const activeTab = tabs.find((t) => t.key === currentTab);
   const supportCardActive = currentTab === "contact_developer" || projectModalOpen || supportActionsOpen;
+  const menuTabs = tabs;
 
   return (
     <SafeAreaView style={styles.container}>
@@ -347,7 +431,7 @@ export function Root() {
             >
 
             <View style={styles.moduleGrid}>
-              {tabs.map((tab) => {
+              {menuTabs.map((tab) => {
                 const accent = MODULE_COLORS[tab.key] || C.primary;
                 const isActive = currentTab === tab.key;
                 return (
@@ -380,10 +464,13 @@ export function Root() {
                 <View style={styles.supportModuleCard}>
                   <View style={styles.supportModuleHeader}>
                     <Text style={styles.supportModuleTitle}>Support & projet</Text>
-                    <Text style={styles.supportModuleHint}>Choisissez l'action que vous voulez lancer</Text>
+                    <Text style={styles.supportModuleHint}>
+                      Choisissez l'action que vous voulez lancer
+                    </Text>
                   </View>
 
                   <View style={styles.supportModuleBody}>
+                    {canSeeContactDeveloper ? (
                     <Pressable
                       style={[styles.supportActionBtn, styles.supportActionBtnYellow]}
                       onPress={() => {
@@ -398,7 +485,9 @@ export function Root() {
                         <Text style={styles.supportActionSubDark}>Message direct a YEFA Technologie</Text>
                       </View>
                     </Pressable>
+                    ) : null}
 
+                    {canSeeProject ? (
                     <Pressable
                       style={[styles.supportActionBtn, styles.supportActionBtnRed]}
                       onPress={() => {
@@ -413,8 +502,25 @@ export function Root() {
                         <Text style={styles.supportActionSubLight}>Cliquez ici et parlez-en a YEFA</Text>
                       </View>
                     </Pressable>
+                    ) : null}
 
-                    {/* A propos */}
+                    {canSeeDonation ? (
+                    <Pressable
+                      style={[styles.supportActionBtn, { backgroundColor: "#00A3E0" }]}
+                      onPress={() => {
+                        setSupportActionsOpen(false);
+                        setMenuOpen(false);
+                        setDonationModalOpen(true);
+                      }}
+                    >
+                      <Text style={styles.supportActionIconText}>💙</Text>
+                      <View style={styles.supportActionTextWrap}>
+                        <Text style={styles.supportActionTitleLight}>Faire un don</Text>
+                        <Text style={styles.supportActionSubLight}>Soutenez le projet via Wave</Text>
+                      </View>
+                    </Pressable>
+                    ) : null}
+
                     <Pressable
                       style={[styles.supportActionBtn, { backgroundColor: C.primaryLight }]}
                       onPress={() => {
@@ -430,7 +536,6 @@ export function Root() {
                       </View>
                     </Pressable>
 
-                    {/* Aide */}
                     <Pressable
                       style={[styles.supportActionBtn, { backgroundColor: C.tealLight }]}
                       onPress={() => {
@@ -446,7 +551,7 @@ export function Root() {
                       </View>
                     </Pressable>
 
-                    {/* Vider le cache */}
+                    {canSeeClearCache ? (
                     <Pressable
                       style={[styles.supportActionBtn, { backgroundColor: C.amberLight, opacity: clearingCache ? 0.6 : 1 }]}
                       onPress={async () => {
@@ -466,6 +571,7 @@ export function Root() {
                         </Text>
                       </View>
                     </Pressable>
+                    ) : null}
                   </View>
                 </View>
 
@@ -489,6 +595,7 @@ export function Root() {
       </Modal>
 
       <ProjectDigitalizationModal visible={projectModalOpen} onClose={() => setProjectModalOpen(false)} />
+      <DonationModal visible={donationModalOpen} onClose={() => setDonationModalOpen(false)} />
 
       {/* Content */}
       <View style={styles.content}>
@@ -522,14 +629,9 @@ export function Root() {
           </View>
         ) : null}
 
-        <ScrollView
-          style={{ flex: 1 }}
-          contentContainerStyle={{ flex: 1 }}
-          scrollEnabled={false}
-          nestedScrollEnabled
-        >
+        <View style={{ flex: 1 }}>
           {renderCurrentScreen()}
-        </ScrollView>
+        </View>
       </View>
 
       <View style={styles.footer}>
@@ -651,6 +753,8 @@ export function Root() {
               </View>
 
               {/* Cache */}
+              {canSeeClearCache ? (
+              <>
               <Pressable
                 style={[styles.aboutCacheBtn, clearingCache && { opacity: 0.6 }]}
                 onPress={async () => { await handleClearCache(); setShowAbout(false); }}
@@ -663,6 +767,8 @@ export function Root() {
               <Text style={styles.aboutCacheHint}>
                 A utiliser si l'appli est lente ou affiche des erreurs de stockage.
               </Text>
+              </>
+              ) : null}
 
             </ScrollView>
           </View>

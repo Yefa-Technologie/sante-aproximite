@@ -75,6 +75,7 @@ export function SecurityAlertScreen() {
   const [error, setError]                     = useState("");
   const [success, setSuccess]                 = useState("");
   const [myAlerts, setMyAlerts]               = useState([]);
+  const [alertsLoading, setAlertsLoading]     = useState(true);
   const [tab, setTab]                         = useState("form");
   const availableAlertTypes = ALERT_TYPES_BY_SERVICE[targetService] || [];
 
@@ -84,6 +85,8 @@ export function SecurityAlertScreen() {
       setMyAlerts(Array.isArray(data) ? data : []);
     } catch (err) {
       if (!silent) setError(err.message);
+    } finally {
+      setAlertsLoading(false);
     }
   }
 
@@ -352,7 +355,7 @@ export function SecurityAlertScreen() {
         <View style={styles.card}>
           <Text style={styles.sectionLabel}>MES SIGNALEMENTS</Text>
           {myAlerts.length === 0 ? (
-            <Text style={shared.hint}>Aucun signalement pour l'instant.</Text>
+            <Text style={shared.hint}>{alertsLoading ? "Chargement..." : "Aucun signalement pour l'instant."}</Text>
           ) : null}
           {myAlerts.map((alert) => {
             const typeInfo = Object.values(ALERT_TYPES_BY_SERVICE).flat().find((t) => t.key === alert.alertType);

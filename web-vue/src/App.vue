@@ -138,9 +138,11 @@ const menuItems = computed(() => {
     pushItem({ tab: "nearby",           label: "Centres de santé",      icon: "📍", section: "RESEAU DE SOINS",  decor: "🏥" });
     pushItem({ tab: "emergency-alerts", label: "Alertes urgence",       icon: "🚨", section: "URGENCES",         decor: "🚨" });
     pushItem({ tab: "complaints",       label: "Plaintes",              icon: "📝", section: "QUALITE",          decor: "📈" });
+    pushItem({ tab: "suggestions",      label: "Observations",          icon: "💡", section: "QUALITE",          decor: "📈" });
     pushItem({ tab: "evaluations",      label: "Evaluations",           icon: "📊", section: "QUALITE",          decor: "📈" });
     pushItem({ tab: "my-center",        label: "Mon centre",            icon: "🏥", section: "SUIVI SANITAIRE",  decor: "🩺" });
-    pushItem({ tab: "settings",         label: "Utilisateurs",          icon: "👥", section: "GOUVERNANCE",      decor: "⚙" });
+    pushItem({ tab: "referrals",        label: "Orientations patients", icon: "🚑", section: "SUIVI SANITAIRE",  decor: "🩺" });
+    pushItem({ tab: "settings",         label: "Paramètres",            icon: "⚙",  section: "GOUVERNANCE",      decor: "⚙" });
     pushItem({ tab: "imports",          label: "Importations",          icon: "📥", section: "GOUVERNANCE",      decor: "⚙" });
     pushItem({ tab: "roles",            label: "Gestion des rôles",     icon: "🛡", section: "GOUVERNANCE",      decor: "⚙" });
     pushItem({ tab: "analytics",        label: "Statistiques",          icon: "📈", section: "ANALYTIQUE",       decor: "📊" });
@@ -151,7 +153,9 @@ const menuItems = computed(() => {
 
   if (hasAnyRole([...etablissementRoles])) {
     pushItem({ tab: "my-center",  label: "Mon centre",             icon: "🏥", section: "SUIVI SANITAIRE",  decor: "🩺" });
+    pushItem({ tab: "referrals",  label: "Orientations patients",  icon: "🚑", section: "SUIVI SANITAIRE",  decor: "🩺" });
     pushItem({ tab: "complaints", label: "Plaintes & Satisfaction", icon: "⭐", section: "SUIVI SANITAIRE",  decor: "🩺" });
+    pushItem({ tab: "suggestions", label: "Observations",           icon: "💡", section: "SUIVI SANITAIRE",  decor: "🩺" });
     pushItem({ tab: "evaluations",label: "Evaluations",             icon: "📊", section: "SUIVI SANITAIRE",  decor: "🩺" });
     pushItem({ tab: "settings",   label: "Utilisateurs",            icon: "👥", section: "GOUVERNANCE",      decor: "⚙" });
     pushItem({ tab: "help",       label: "Aide",                    icon: "❓", section: "SUPPORT & PROJET", decor: "💬" });
@@ -174,6 +178,7 @@ const menuItems = computed(() => {
 
   if (hasAnyRole([...adminRoles])) {
     pushItem({ tab: "complaints", label: "Gestion des Plaintes", icon: "📝", section: "QUALITE",          decor: "📈" });
+    pushItem({ tab: "suggestions", label: "Observations",         icon: "💡", section: "QUALITE",          decor: "📈" });
     pushItem({ tab: "evaluations",label: "Evaluations",           icon: "📊", section: "QUALITE",          decor: "📈" });
     pushItem({ tab: "settings",   label: "Parametres",            icon: "⚙",  section: "GOUVERNANCE",      decor: "👥" });
     pushItem({ tab: "imports",    label: "Importations",          icon: "📥", section: "GOUVERNANCE",      decor: "👥" });
