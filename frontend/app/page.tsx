@@ -20,7 +20,7 @@ export default function RootPage() {
 
   return (
     <div className="flex min-h-screen items-center justify-center">
-      <Spinner className="h-6 w-6 text-red-600" />
+      <Spinner className="h-6 w-6 text-blue-600" />
     </div>
   );
 }

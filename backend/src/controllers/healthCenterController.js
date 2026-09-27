@@ -1,4 +1,5 @@
 import { pool } from "../config/db.js";
+import { buildFeedbackUrl } from "./qrFeedbackController.js";
 
 const ESTABLISHMENT_TYPES = ["CONFESSIONNEL", "PRIVE", "PUBLIQUE"];
 const CENTER_LEVELS = [
@@ -367,6 +368,7 @@ function mapServiceRow(row) {
     bedsAvailable: Number(row.beds_available) || 0,
     bedsOccupied: Number(row.beds_occupied) || 0,
     bedsOutOfService: Number(row.beds_out_of_service) || 0,
+    isActive: row.is_active !== false,
   };
 }
 
@@ -419,7 +421,8 @@ function normalizeServices(services) {
         description: typeof service?.description === "string" ? service.description.trim() : null,
         bedsAvailable: normalizeBedCount(service?.bedsAvailable),
         bedsOccupied: normalizeBedCount(service?.bedsOccupied),
-        bedsOutOfService: normalizeBedCount(service?.bedsOutOfService)
+        bedsOutOfService: normalizeBedCount(service?.bedsOutOfService),
+        isActive: service?.isActive !== false
       };
     })
     .filter((service) => service.name.length > 0);
@@ -736,7 +739,8 @@ export async function addService(req, res) {
               'description', s.description,
               'bedsAvailable', s.beds_available,
               'bedsOccupied', s.beds_occupied,
-              'bedsOutOfService', s.beds_out_of_service
+              'bedsOutOfService', s.beds_out_of_service,
+              'isActive', s.is_active
             )
             ORDER BY s.id
           )
@@ -775,7 +779,7 @@ export async function updateCenterService(req, res) {
   }
 
   const serviceResult = await pool.query(
-    `SELECT id, name, description, beds_available, beds_occupied, beds_out_of_service
+    `SELECT id, name, description, beds_available, beds_occupied, beds_out_of_service, is_active
      FROM health_center_services
      WHERE center_id = $1 AND name = $2
      LIMIT 1;`,
@@ -789,6 +793,9 @@ export async function updateCenterService(req, res) {
   const adjust = typeof req.body?.adjust === "string" ? req.body.adjust : null;
 
   if (adjust === "occupy" || adjust === "free") {
+    if (service.is_active === false) {
+      return res.status(400).json({ message: "Ce service est desactive" });
+    }
     if (adjust === "occupy" && Number(service.beds_available) <= 0) {
       return res.status(400).json({ message: "Aucune place disponible" });
     }
@@ -800,7 +807,7 @@ export async function updateCenterService(req, res) {
       `UPDATE health_center_services
        SET beds_available = beds_available - $2, beds_occupied = beds_occupied + $2
        WHERE id = $1
-       RETURNING name, description, beds_available, beds_occupied, beds_out_of_service;`,
+       RETURNING name, description, beds_available, beds_occupied, beds_out_of_service, is_active;`,
       [service.id, delta]
     );
     return res.json({ success: true, service: mapServiceRow(updated.rows[0]) });
@@ -811,13 +818,14 @@ export async function updateCenterService(req, res) {
   const nextAvailable = req.body?.bedsAvailable !== undefined ? normalizeBedCount(req.body.bedsAvailable) : service.beds_available;
   const nextOccupied = req.body?.bedsOccupied !== undefined ? normalizeBedCount(req.body.bedsOccupied) : service.beds_occupied;
   const nextOutOfService = req.body?.bedsOutOfService !== undefined ? normalizeBedCount(req.body.bedsOutOfService) : service.beds_out_of_service;
+  const nextActive = typeof req.body?.isActive === "boolean" ? req.body.isActive : service.is_active !== false;
 
   const updated = await pool.query(
     `UPDATE health_center_services
-     SET name = $2, description = $3, beds_available = $4, beds_occupied = $5, beds_out_of_service = $6
+     SET name = $2, description = $3, beds_available = $4, beds_occupied = $5, beds_out_of_service = $6, is_active = $7
      WHERE id = $1
-     RETURNING name, description, beds_available, beds_occupied, beds_out_of_service;`,
-    [service.id, nextName, nextDescription, nextAvailable, nextOccupied, nextOutOfService]
+     RETURNING name, description, beds_available, beds_occupied, beds_out_of_service, is_active;`,
+    [service.id, nextName, nextDescription, nextAvailable, nextOccupied, nextOutOfService, nextActive]
   );
   return res.json({ success: true, service: mapServiceRow(updated.rows[0]) });
 }
@@ -979,12 +987,13 @@ export async function getNearbyCenters(req, res) {
               'description', s.description,
               'bedsAvailable', s.beds_available,
               'bedsOccupied', s.beds_occupied,
-              'bedsOutOfService', s.beds_out_of_service
+              'bedsOutOfService', s.beds_out_of_service,
+              'isActive', s.is_active
             )
             ORDER BY s.id
           )
           FROM health_center_services s
-          WHERE s.center_id = cwd.id
+          WHERE s.center_id = cwd.id AND s.is_active
         ), '[]'::json) AS services
       FROM centers_with_distance cwd
       ${filterClause}
@@ -1070,7 +1079,8 @@ export async function getAllCenters(req, res) {
               'description', s.description,
               'bedsAvailable', s.beds_available,
               'bedsOccupied', s.beds_occupied,
-              'bedsOutOfService', s.beds_out_of_service
+              'bedsOutOfService', s.beds_out_of_service,
+              'isActive', s.is_active
             )
             ORDER BY s.id
           )
@@ -1104,7 +1114,7 @@ export async function exportEspcCenters(req, res) {
         COALESCE((
           SELECT string_agg(trim(s.name), ', ' ORDER BY trim(s.name))
           FROM health_center_services s
-          WHERE s.center_id = hc.id
+          WHERE s.center_id = hc.id AND s.is_active
             AND trim(coalesce(s.name, '')) <> ''
         ), '') AS services
       FROM health_centers hc
@@ -1221,12 +1231,13 @@ export async function getCentersSync(req, res) {
               'description', s.description,
               'bedsAvailable', s.beds_available,
               'bedsOccupied', s.beds_occupied,
-              'bedsOutOfService', s.beds_out_of_service
+              'bedsOutOfService', s.beds_out_of_service,
+              'isActive', s.is_active
             )
             ORDER BY s.id
           )
           FROM health_center_services s
-          WHERE s.center_id = hc.id
+          WHERE s.center_id = hc.id AND s.is_active
         ), '[]'::json) AS services
       FROM health_centers hc
       WHERE ${whereParts.join(" AND ")}
@@ -1583,10 +1594,10 @@ export async function updateCenter(req, res) {
     for (const service of normalizedServices) {
       await client.query(
         `
-          INSERT INTO health_center_services (center_id, name, description, beds_available, beds_occupied, beds_out_of_service)
-          VALUES ($1, $2, $3, $4, $5, $6);
+          INSERT INTO health_center_services (center_id, name, description, beds_available, beds_occupied, beds_out_of_service, is_active)
+          VALUES ($1, $2, $3, $4, $5, $6, $7);
         `,
-        [centerId, service.name, service.description || null, service.bedsAvailable, service.bedsOccupied, service.bedsOutOfService]
+        [centerId, service.name, service.description || null, service.bedsAvailable, service.bedsOccupied, service.bedsOutOfService, service.isActive !== false]
       );
     }
 
@@ -1613,7 +1624,8 @@ export async function updateCenter(req, res) {
               'description', s.description,
               'bedsAvailable', s.beds_available,
               'bedsOccupied', s.beds_occupied,
-              'bedsOutOfService', s.beds_out_of_service
+              'bedsOutOfService', s.beds_out_of_service,
+              'isActive', s.is_active
             )
               ORDER BY s.id
             )
@@ -1732,10 +1744,10 @@ export async function updateCenterByAdmin(req, res) {
     for (const service of normalizedServices) {
       await client.query(
         `
-          INSERT INTO health_center_services (center_id, name, description, beds_available, beds_occupied, beds_out_of_service)
-          VALUES ($1, $2, $3, $4, $5, $6);
+          INSERT INTO health_center_services (center_id, name, description, beds_available, beds_occupied, beds_out_of_service, is_active)
+          VALUES ($1, $2, $3, $4, $5, $6, $7);
         `,
-        [centerId, service.name, service.description || null, service.bedsAvailable, service.bedsOccupied, service.bedsOutOfService]
+        [centerId, service.name, service.description || null, service.bedsAvailable, service.bedsOccupied, service.bedsOutOfService, service.isActive !== false]
       );
     }
 
@@ -1763,7 +1775,8 @@ export async function updateCenterByAdmin(req, res) {
               'description', s.description,
               'bedsAvailable', s.beds_available,
               'bedsOccupied', s.beds_occupied,
-              'bedsOutOfService', s.beds_out_of_service
+              'bedsOutOfService', s.beds_out_of_service,
+              'isActive', s.is_active
             )
               ORDER BY s.id
             )
@@ -1935,7 +1948,8 @@ export async function listPendingCenters(req, res) {
               'description', s.description,
               'bedsAvailable', s.beds_available,
               'bedsOccupied', s.beds_occupied,
-              'bedsOutOfService', s.beds_out_of_service
+              'bedsOutOfService', s.beds_out_of_service,
+              'isActive', s.is_active
             )
             ORDER BY s.id
           )
@@ -2073,7 +2087,8 @@ export async function getCheckinCode(req, res) {
     [centerId]
   );
   if (result.rowCount === 0) return res.status(404).json({ message: "Centre introuvable" });
-  return res.json({ checkinCode: result.rows[0].checkin_code });
+  const checkinCode = result.rows[0].checkin_code;
+  return res.json({ checkinCode, feedbackUrl: buildFeedbackUrl(req, centerId, checkinCode) });
 }
 
 export async function rateCenter(req, res) {

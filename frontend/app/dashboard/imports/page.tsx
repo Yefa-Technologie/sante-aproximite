@@ -114,7 +114,7 @@ export default function ImportsPage() {
           id="import-file"
           onChange={(e) => e.target.files?.[0] && onFile(e.target.files[0])}
         />
-        <label htmlFor="import-file" className="cursor-pointer text-sm font-semibold text-red-600">
+        <label htmlFor="import-file" className="cursor-pointer text-sm font-semibold text-blue-600">
           Choisir un fichier CSV
         </label>
         <p className="mt-2 text-xs text-slate-400">

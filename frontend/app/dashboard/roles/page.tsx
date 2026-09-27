@@ -116,7 +116,7 @@ export default function RolesPage() {
                     title={p.desc}
                     onClick={() => togglePerm(p.key)}
                     className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                      selectedPerms.includes(p.key) ? "bg-red-600 text-white" : "bg-slate-100 text-slate-600"
+                      selectedPerms.includes(p.key) ? "bg-blue-600 text-white" : "bg-blue-50 text-blue-700 hover:bg-blue-100"
                     }`}
                   >
                     {p.label}

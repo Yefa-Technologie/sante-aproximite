@@ -16,6 +16,7 @@ type AuthState = {
   hydrate: () => void;
   login: (payload: LoginPayload) => void;
   logout: () => void;
+  updateUser: (patch: Partial<User>) => void;
 };
 
 export const useAuthStore = create<AuthState>((set) => ({
@@ -35,6 +36,13 @@ export const useAuthStore = create<AuthState>((set) => ({
     localStorage.setItem(USER_KEY, JSON.stringify(user));
     set({ token: payload.token, user, ready: true });
   },
+  updateUser: (patch) =>
+    set((state) => {
+      if (!state.user) return {};
+      const user = { ...state.user, ...patch };
+      localStorage.setItem(USER_KEY, JSON.stringify(user));
+      return { user };
+    }),
   logout: () => {
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(USER_KEY);

@@ -226,7 +226,7 @@ export async function listUsers(req, res) {
   const params = [];
 
   // Rôles que NATIONAL peut gérer : uniquement les comptes du système de santé
-  // (pas SAMU opérationnel, pas Police, Gendarmerie — chaînes de commandement distinctes)
+  // (pas SAMU opérationnel, pas Police, Gendarmerie - chaînes de commandement distinctes)
   const NATIONAL_HEALTH_ROLES = [
     "NATIONAL","REGULATOR","REGION","DISTRICT","ETABLISSEMENT","CHEF_ETABLISSEMENT","USER"
   ];
@@ -341,7 +341,7 @@ export async function listUsers(req, res) {
 // Rôles qu'un niveau peut créer (hiérarchie descendante uniquement)
 const CREATABLE_ROLES_BY_LEVEL = {
   DEVELOPER:         null,
-  // NATIONAL gère uniquement le système de santé — pas les services d'urgence/sécurité
+  // NATIONAL gère uniquement le système de santé - pas les services d'urgence/sécurité
   NATIONAL:          ["NATIONAL","REGULATOR","REGION","DISTRICT","ETABLISSEMENT","CHEF_ETABLISSEMENT","USER"],
   REGULATOR:         ["REGULATOR","REGION","DISTRICT","ETABLISSEMENT","CHEF_ETABLISSEMENT","SAMU","SAPEUR_POMPIER","USER"],
   REGION:            ["DISTRICT","ETABLISSEMENT","CHEF_ETABLISSEMENT","SAMU","SAPEUR_POMPIER"],
@@ -498,7 +498,7 @@ export async function updateUser(req, res) {
   const currentTargetRoles = currentRolesResult.rows.map((r) => r.role);
   const targetIsDeveloper = currentTargetRoles.includes("DEVELOPER") || String(current.role || "").toUpperCase() === "DEVELOPER";
 
-  // Un compte Developer est intouchable — aucun compte ne peut modifier ses rôles
+  // Un compte Developer est intouchable - aucun compte ne peut modifier ses rôles
   if (targetIsDeveloper) {
     return res.status(403).json({ message: "Les rôles d'un compte Developer sont verrouillés et ne peuvent pas être modifiés." });
   }

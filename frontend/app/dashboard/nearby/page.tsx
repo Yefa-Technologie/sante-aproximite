@@ -150,7 +150,7 @@ export default function NearbyPage() {
           <div
             key={center._id}
             className={`flex flex-col gap-1.5 rounded-2xl border bg-white p-4 shadow-sm ${
-              selected?._id === center._id ? "border-red-400 ring-1 ring-red-200" : "border-slate-200"
+              selected?._id === center._id ? "border-blue-400 ring-1 ring-blue-200" : "border-slate-200"
             }`}
           >
             <h3 className="text-sm font-bold text-slate-900">

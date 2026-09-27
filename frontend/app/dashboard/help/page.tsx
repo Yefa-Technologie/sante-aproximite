@@ -28,7 +28,7 @@ export default function HelpPage() {
               key={item.q}
               onClick={() => setOpen(isOpen ? null : i)}
               className={`rounded-2xl border p-4 text-left shadow-sm transition-colors ${
-                isOpen ? "border-red-200 bg-red-50" : "border-slate-200 bg-white hover:bg-slate-50"
+                isOpen ? "border-blue-200 bg-blue-50" : "border-slate-200 bg-white hover:bg-slate-50"
               }`}
             >
               <div className="flex items-center justify-between gap-3">
@@ -41,11 +41,11 @@ export default function HelpPage() {
         })}
       </div>
 
-      <div className="rounded-2xl bg-red-950 p-6 text-center text-white">
-        <p className="text-sm font-semibold text-red-100">Pas de reponse a votre question ?</p>
+      <div className="rounded-2xl bg-blue-950 p-6 text-center text-white">
+        <p className="text-sm font-semibold text-blue-100">Pas de reponse a votre question ?</p>
         <a
           href="mailto:yefa.technologie@gmail.com"
-          className="mt-3 inline-flex items-center gap-2 rounded-lg bg-white px-4 py-2 text-sm font-bold text-red-900"
+          className="mt-3 inline-flex items-center gap-2 rounded-lg bg-white px-4 py-2 text-sm font-bold text-blue-900"
         >
           <Mail className="h-4 w-4" /> Contacter le support
         </a>

@@ -54,7 +54,7 @@ export default function AnalyticsPage() {
   const byLevel = useMemo(() => {
     const counts: Record<string, number> = {};
     centers.forEach((c) => { counts[c.level] = (counts[c.level] || 0) + 1; });
-    const palette = ["#ef4444", "#3b82f6", "#10b981", "#f59e0b", "#8b5cf6", "#0ea5e9", "#f472b6", "#94a3b8"];
+    const palette = ["#3b82f6", "#10b981", "#f59e0b", "#8b5cf6", "#0ea5e9", "#f472b6", "#ef4444", "#94a3b8"];
     return Object.entries(counts).map(([label, count], i) => ({ label, count, color: palette[i % palette.length] }));
   }, [centers]);
 
@@ -102,7 +102,7 @@ export default function AnalyticsPage() {
         </div>
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <p className="mb-3 text-sm font-semibold text-slate-700">Utilisateurs par role (top 10)</p>
-          <BarChart data={usersByRole} color="#ef4444" />
+          <BarChart data={usersByRole} color="#3b82f6" />
         </div>
       </div>
     </div>

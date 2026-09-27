@@ -1,4 +1,5 @@
-import { ActivityIndicator, AppState, Image, Linking, Modal, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, AppState, Image, Linking, Modal, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, useWindowDimensions, View } from "react-native";
+import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 import { useEffect, useRef, useState } from "react";
 import { apiFetch, clearLocalCache, getPendingRequestsCount, syncPendingRequests, trackEvent } from "./api/client";
 import { useAuth } from "./context/AuthContext";
@@ -28,7 +29,7 @@ const MODULE_ICONS = {
 
 const MODULE_COLORS = {
   nearby:              C.teal,
-  referral:            C.red,
+  referral:            C.primary,
   complaints:          C.primary,
   complaints_tracking: C.primary,
   chef:                C.teal,
@@ -38,11 +39,45 @@ const MODULE_COLORS = {
   security_ops:        C.primary,
   settings:            C.textMuted,
   suggestions:         C.amber,
+  support:             C.amber,
+};
+
+const ROLE_LABELS = {
+  USER: "Utilisateur",
+  ETABLISSEMENT: "Etablissement de sante",
+  CHEF_ETABLISSEMENT: "Chef d'etablissement",
+  DISTRICT: "District sanitaire",
+  REGION: "Direction regionale",
+  NATIONAL: "Niveau national",
+  REGULATOR: "Regulateur",
+  SAMU: "SAMU",
+  SAPEUR_POMPIER: "Sapeurs-pompiers",
+  POLICE: "Police",
+  GENDARMERIE: "Gendarmerie",
+  PROTECTION_CIVILE: "Protection civile",
+  DEVELOPER: "Developpeur",
+};
+
+const MODULE_DESCRIPTIONS = {
+  profile:             "Vos informations et votre mot de passe",
+  nearby:              "Carte et liste des centres proches",
+  referral:            "Orienter un patient vers un centre",
+  complaints:          "Signaler un probleme de service",
+  complaints_tracking: "Suivre le traitement des plaintes",
+  suggestions:         "Partager une idee ou une remarque",
+  chef:                "Gerer votre etablissement",
+  alerts:              "Recevoir et traiter les alertes",
+  security_ops:        "Traiter les alertes de securite",
+  emergency:           "Demander une aide medicale",
+  security_alert:      "Alerter la police ou la gendarmerie",
+  settings:            "Configurer les centres de sante",
+  support:             "Contacter l'equipe, soutenir le projet",
 };
 
 export function Root() {
   const { user, token, ready, logout } = useAuth();
-  const [currentTab, setCurrentTab] = useState("nearby");
+  const { width: windowWidth } = useWindowDimensions();
+  const [currentTab, setCurrentTab] = useState("home");
   const [menuOpen, setMenuOpen] = useState(false);
   const [projectModalOpen, setProjectModalOpen] = useState(false);
   const [donationModalOpen, setDonationModalOpen] = useState(false);
@@ -51,8 +86,8 @@ export function Root() {
   const [pendingSyncCount, setPendingSyncCount] = useState(0);
   const [syncNotice, setSyncNotice] = useState(null);
   const [moduleSettings, setModuleSettings] = useState({});
-  const autoSelectedResponderTab = useRef(false);
-  const autoSelectedChefTab = useRef(false);
+  const [pendingReferralsCount, setPendingReferralsCount] = useState(0);
+  const [chefInitialSection, setChefInitialSection] = useState("");
   const pendingSyncCountRef = useRef(0);
   const syncNoticeTimeoutRef = useRef(null);
 
@@ -200,7 +235,7 @@ export function Root() {
           setUpdateVersion(data.version);
         }
       } catch {
-        // ignore — offline or endpoint not available
+        // ignore - offline or endpoint not available
       }
     }
     checkForUpdate();
@@ -239,32 +274,8 @@ export function Root() {
   }, [token]);
 
   useEffect(() => {
-    if (canSeeChefSpace && !chefHasPendingOrMissingCenter && !autoSelectedChefTab.current) {
-      setCurrentTab("chef");
-      autoSelectedChefTab.current = true;
-      return;
-    }
-    if (canSeeSecurityOps && !autoSelectedResponderTab.current) {
-      setCurrentTab("security_ops");
-      autoSelectedResponderTab.current = true;
-      return;
-    }
-    if (canSeeEmergencyAlerts && !autoSelectedResponderTab.current) {
-      setCurrentTab("alerts");
-      autoSelectedResponderTab.current = true;
-      return;
-    }
-    if (!canSeeNearby && currentTab === "nearby") {
-      setCurrentTab("complaints");
-      return;
-    }
-    if (!canPostComplaint && !canTrackComplaints && ["complaints", "complaints_tracking"].includes(currentTab)) {
-      setCurrentTab("nearby");
-    }
-  }, [
-    canSeeChefSpace, chefHasPendingOrMissingCenter, canSeeEmergencyAlerts, canSeeSecurityOps,
-    canSeeNearby, canPostComplaint, canTrackComplaints, currentTab
-  ]);
+    setCurrentTab("home");
+  }, [user?.id]);
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -281,6 +292,31 @@ export function Root() {
     setRefreshKey((k) => k + 1);
   };
 
+  // Orientations de patients en attente : alimente la cloche de notification.
+  const canReceiveReferrals = canSeeChefSpace && hasAnyRole(["ETABLISSEMENT", "CHEF_ETABLISSEMENT"]);
+  useEffect(() => {
+    if (!token || !canReceiveReferrals) { setPendingReferralsCount(0); return undefined; }
+    let active = true;
+    const load = () => apiFetch("/referrals/incoming", { token })
+      .then((data) => {
+        if (active) setPendingReferralsCount((Array.isArray(data) ? data : []).filter((item) => item.status === "PENDING").length);
+      })
+      .catch(() => {});
+    load();
+    const interval = setInterval(load, 30000);
+    return () => { active = false; clearInterval(interval); };
+  }, [token, canReceiveReferrals, currentTab]);
+
+  useEffect(() => {
+    if (currentTab !== "chef") setChefInitialSection("");
+  }, [currentTab]);
+
+  function openReferralNotifications() {
+    setChefInitialSection("suivi");
+    setCurrentTab("chef");
+    setRefreshKey((k) => k + 1);
+  }
+
   if (!ready) {
     return (
       <SafeAreaView style={styles.centered}>
@@ -292,6 +328,82 @@ export function Root() {
   if (!user) return <AuthScreen />;
 
   function renderCurrentScreen() {
+    if (currentTab === "profile") {
+      const { ProfileScreen } = require("./screens/ProfileScreen");
+      return <ProfileScreen key={refreshKey} />;
+    }
+    if (currentTab === "home") {
+      const homeColumns = windowWidth >= 600 ? 4 : 3;
+      const homeGap = windowWidth >= 600 ? 16 : 10;
+      const homePadding = windowWidth >= 600 ? 24 : 14;
+      const tileWidth = Math.floor((windowWidth - homePadding * 2 - homeGap * (homeColumns - 1)) / homeColumns);
+      // "Mon profil" reste accessible depuis le menu, pas depuis l'accueil.
+      const homeTiles = [
+        ...tabs.filter((tab) => tab.key !== "profile"),
+        { key: "support", label: "Support & projet", icon: MODULE_ICONS.developer }
+      ];
+      return (
+        <View style={{ flex: 1 }}>
+          <Svg pointerEvents="none" style={StyleSheet.absoluteFill} width="100%" height="100%">
+            <Defs>
+              <LinearGradient id="homeBg" x1="0" y1="0" x2="0" y2="1">
+                <Stop offset="0" stopColor="#CFE0FA" />
+                <Stop offset="1" stopColor="#D5F1EC" />
+              </LinearGradient>
+            </Defs>
+            <Rect x="0" y="0" width="100%" height="100%" fill="url(#homeBg)" />
+          </Svg>
+          <View pointerEvents="none" accessible={false} style={[StyleSheet.absoluteFillObject, { alignItems: "center", justifyContent: "center" }]}>
+            <Image
+              source={require("../assets/logo-yefa.png")}
+              resizeMode="contain"
+              accessible={false}
+              style={{ width: "88%", height: "75%", maxWidth: 560, opacity: 0.06 }}
+            />
+          </View>
+          <ScrollView contentContainerStyle={{ paddingHorizontal: homePadding, paddingTop: 20, paddingBottom: 28 }}>
+            <View style={styles.homeHero}>
+              <Text style={styles.homeHeroTitle}>Bienvenue</Text>
+              <Text style={styles.homeHeroName} numberOfLines={2}>{user.fullName}</Text>
+              <Text style={styles.homeHeroHint}>Choisissez un module</Text>
+            </View>
+            <View style={[styles.homeGrid, { gap: homeGap }]}>
+              {homeTiles.map((tab) => {
+                const accent = MODULE_COLORS[tab.key] || C.primary;
+                const onPress = tab.key === "support"
+                  ? () => { setSupportActionsOpen(true); setMenuOpen(true); }
+                  : () => setCurrentTab(tab.key);
+                return (
+                  <Pressable
+                    key={tab.key}
+                    style={({ pressed }) => [{ width: tileWidth, paddingTop: 5, paddingRight: 5 }, pressed && { opacity: 0.85 }]}
+                    onPress={onPress}
+                    accessibilityRole="button"
+                    accessibilityLabel={`${tab.label}. ${MODULE_DESCRIPTIONS[tab.key] || ""}`}
+                  >
+                    <View style={styles.homeTileBack} />
+                    {tab.key === "chef" && pendingReferralsCount > 0 ? (
+                      <View style={styles.homeTileBadge}>
+                        <Text style={styles.homeTileBadgeText}>🔔 {pendingReferralsCount}</Text>
+                      </View>
+                    ) : null}
+                    <View style={styles.homeTile}>
+                      <View style={[styles.homeTileArt, { backgroundColor: `${accent}14`, height: Math.round(tileWidth * 0.52) }]}>
+                        <Image source={tab.icon} style={{ width: Math.round(tileWidth * 0.4), height: Math.round(tileWidth * 0.4) }} />
+                      </View>
+                      <Text style={styles.homeTileLabel} numberOfLines={2}>{tab.label}</Text>
+                      {MODULE_DESCRIPTIONS[tab.key] ? (
+                        <Text style={styles.homeTileDesc} numberOfLines={3}>{MODULE_DESCRIPTIONS[tab.key]}</Text>
+                      ) : null}
+                    </View>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </ScrollView>
+        </View>
+      );
+    }
     if (canSeeNearby && currentTab === "nearby") {
       const { NearbyScreen } = require("./screens/NearbyScreen");
       return <NearbyScreen key={refreshKey} />;
@@ -314,7 +426,7 @@ export function Root() {
     }
     if (canSeeChefSpace && currentTab === "chef") {
       const { ChefScreen } = require("./screens/ChefScreen");
-      return <ChefScreen key={refreshKey} />;
+      return <ChefScreen key={refreshKey} initialSection={chefInitialSection} />;
     }
     if (canSeeEmergencyAlerts && currentTab === "alerts") {
       const { EmergencyOpsScreen } = require("./screens/EmergencyOpsScreen");
@@ -344,6 +456,7 @@ export function Root() {
   }
 
   const tabs = [
+    { key: "profile", label: "Mon profil", icon: MODULE_ICONS.settings },
     ...(canSeeNearby           ? [{ key: "nearby",              label: "Centres de sante",       icon: MODULE_ICONS.centers   }] : []),
     ...(canUseReferralModule   ? [{ key: "referral",            label: "Reference malade",       icon: MODULE_ICONS.referral  }] : []),
     ...(canPostComplaint        ? [{ key: "complaints",          label: "Poser une plainte",      icon: MODULE_ICONS.complaints }] : []),
@@ -380,6 +493,20 @@ export function Root() {
               <Text style={styles.moduleLabelText} numberOfLines={1}>{activeTab.label}</Text>
             </View>
           ) : null}
+          {canReceiveReferrals ? (
+            <Pressable
+              style={styles.bellBtn}
+              onPress={openReferralNotifications}
+              accessibilityLabel={`Orientations de patients : ${pendingReferralsCount} en attente`}
+            >
+              <Text style={styles.bellIcon}>🔔</Text>
+              {pendingReferralsCount > 0 ? (
+                <View style={styles.bellBadge}>
+                  <Text style={styles.bellBadgeText}>{pendingReferralsCount > 99 ? "99+" : pendingReferralsCount}</Text>
+                </View>
+              ) : null}
+            </Pressable>
+          ) : null}
           {/* Refresh button */}
           <Pressable
             style={styles.refreshBtn}
@@ -402,7 +529,7 @@ export function Root() {
       <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={() => setMenuOpen(false)}>
         <Pressable style={styles.overlay} onPress={() => setMenuOpen(false)}>
           <Pressable style={styles.drawer} onPress={() => {}}>
-            {/* Fixed header — never scrolls */}
+            {/* Fixed header - never scrolls */}
             <View style={styles.drawerHeader}>
               <View style={styles.drawerUserRow}>
                 <View style={styles.drawerAvatar}>
@@ -580,7 +707,7 @@ export function Root() {
 
             </ScrollView>
 
-            {/* Fixed footer — always visible */}
+            {/* Fixed footer - always visible */}
             <Pressable
               style={styles.logoutBtn}
               onPress={() => { setMenuOpen(false); logout(); }}
@@ -603,7 +730,7 @@ export function Root() {
             onPress={() => Linking.openURL("https://play.google.com/store/apps/details?id=com.yefa.sante")}
           >
             <Text style={styles.updateBannerText}>
-              🚀 Mise a jour disponible (v{updateVersion}) — Appuyez pour mettre a jour
+              🚀 Mise a jour disponible (v{updateVersion}) - Appuyez pour mettre a jour
             </Text>
           </Pressable>
         ) : null}
@@ -627,6 +754,31 @@ export function Root() {
         ) : null}
 
         <View style={{ flex: 1 }}>
+          <View style={styles.sessionBar}>
+            {currentTab !== "home" ? (
+              <Pressable onPress={() => setCurrentTab("home")} accessibilityRole="button" style={styles.sessionBack}>
+                <Text style={styles.sessionBackText}>‹ Accueil</Text>
+              </Pressable>
+            ) : null}
+            <Pressable
+              style={({ pressed }) => [styles.sessionUser, (pressed || currentTab === "profile") && styles.sessionUserActive]}
+              onPress={() => setCurrentTab("profile")}
+              accessibilityRole="button"
+              accessibilityLabel="Gerer mon profil"
+            >
+              <View style={styles.sessionAvatar}>
+                <Text style={styles.sessionAvatarText}>{String(user.fullName || "?").trim().charAt(0).toUpperCase()}</Text>
+              </View>
+              <View style={{ flexShrink: 1 }}>
+                <Text style={styles.sessionLabel}>Connecte · Mon profil</Text>
+                <Text style={styles.sessionName} numberOfLines={1}>
+                  {user.fullName}
+                  <Text style={styles.sessionRole}> · {ROLE_LABELS[normalizedRole] || normalizedRole || "Utilisateur"}</Text>
+                </Text>
+              </View>
+              <Text style={styles.sessionChevron}>›</Text>
+            </Pressable>
+          </View>
           {renderCurrentScreen()}
         </View>
       </View>
@@ -910,7 +1062,7 @@ const styles = StyleSheet.create({
     marginHorizontal: 12,
     paddingHorizontal: 14,
     paddingVertical: 10,
-    backgroundColor: C.primary,
+    backgroundColor: "#3B82F6",
     borderRadius: 16,
     flexDirection: "row",
     justifyContent: "space-between",
@@ -924,6 +1076,36 @@ const styles = StyleSheet.create({
   appName:     { fontSize: 16, fontWeight: "800", color: "#FFFFFF" },
   userName:    { fontSize: 12, color: "rgba(255,255,255,0.8)", fontWeight: "500", marginTop: 1 },
   topBarRight: { flexDirection: "row", alignItems: "center", gap: 8 },
+  bellBtn: { width: 34, height: 34, alignItems: "center", justifyContent: "center" },
+  bellIcon: { fontSize: 20 },
+  bellBadge: {
+    position: "absolute", top: -2, right: -4, minWidth: 18, height: 18, borderRadius: 9,
+    paddingHorizontal: 4, backgroundColor: C.red, alignItems: "center", justifyContent: "center",
+    borderWidth: 1.5, borderColor: "#fff",
+  },
+  bellBadgeText: { color: "#fff", fontSize: 10, fontWeight: "800" },
+  sessionBar: {
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10,
+    paddingHorizontal: 16, paddingVertical: 8,
+  },
+  sessionBack: { paddingVertical: 4, paddingRight: 8 },
+  sessionBackText: { color: C.primary, fontWeight: "700" },
+  sessionUser: {
+    flexDirection: "row", alignItems: "center", gap: 8, marginLeft: "auto", flexShrink: 1,
+    backgroundColor: C.primaryLight, borderRadius: 999, paddingVertical: 4, paddingLeft: 4, paddingRight: 12,
+  },
+  sessionUserActive: { backgroundColor: "#D6E4FF" },
+  sessionChevron: { fontSize: 18, fontWeight: "800", color: C.primary, marginLeft: 2 },
+  sessionAvatar: { width: 26, height: 26, borderRadius: 13, backgroundColor: C.primary, alignItems: "center", justifyContent: "center" },
+  sessionAvatarText: { color: "#fff", fontWeight: "800", fontSize: 12 },
+  sessionLabel: { fontSize: 9, fontWeight: "800", color: C.textMuted, letterSpacing: 0.6, textTransform: "uppercase" },
+  sessionName: { fontSize: 13, fontWeight: "800", color: C.primaryDark },
+  sessionRole: { fontSize: 12, fontWeight: "600", color: C.textMed },
+  homeTileBadge: {
+    position: "absolute", top: 0, right: 0, zIndex: 2, backgroundColor: C.red, borderRadius: 999,
+    paddingHorizontal: 8, paddingVertical: 3, borderWidth: 2, borderColor: "#fff",
+  },
+  homeTileBadgeText: { color: "#fff", fontSize: 11, fontWeight: "800" },
   moduleLabel: {
     borderRadius: 999,
     paddingHorizontal: 10,
@@ -977,6 +1159,41 @@ const styles = StyleSheet.create({
   },
   drawerCloseBtnText: { color: C.textMuted, fontWeight: "700", fontSize: 14 },
   drawerDivider:  { height: 1, backgroundColor: C.border, marginVertical: 14 },
+
+  homeHero: { alignItems: "center", marginBottom: 20, gap: 2 },
+  homeHeroTitle: { fontSize: 14, fontWeight: "600", color: C.primaryDark, letterSpacing: 0.5 },
+  homeHeroName: { fontSize: 22, fontWeight: "800", color: C.textDark, textAlign: "center" },
+  homeHeroHint: { fontSize: 13, color: C.textMuted, fontWeight: "600", marginTop: 4 },
+  homeGrid: { flexDirection: "row", flexWrap: "wrap" },
+  homeTileBack: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 5,
+    left: 5,
+    borderRadius: 16,
+    backgroundColor: "rgba(255,255,255,0.55)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.9)",
+  },
+  homeTile: {
+    flex: 1,
+    backgroundColor: C.surface,
+    borderRadius: 16,
+    padding: 6,
+    paddingBottom: 10,
+    alignItems: "center",
+    ...S.sm,
+  },
+  homeTileArt: {
+    alignSelf: "stretch",
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 8,
+  },
+  homeTileLabel: { fontSize: 12, fontWeight: "800", color: C.textDark, textAlign: "center", paddingHorizontal: 2 },
+  homeTileDesc: { fontSize: 10, lineHeight: 13, color: C.textMuted, textAlign: "center", marginTop: 3, paddingHorizontal: 2 },
 
   moduleGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
   moduleCard: {
@@ -1124,7 +1341,7 @@ const styles = StyleSheet.create({
   },
   modalTitle: { fontSize: 20, fontWeight: "800", color: C.textDark },
 
-  // About — hero
+  // About - hero
   aboutHero: {
     alignItems: "center",
     backgroundColor: C.primaryDark,

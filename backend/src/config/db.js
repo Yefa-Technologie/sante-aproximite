@@ -255,6 +255,10 @@ async function runMigrations() {
     ALTER TABLE health_center_services
     ADD COLUMN IF NOT EXISTS beds_out_of_service INT NOT NULL DEFAULT 0;
   `);
+  await pool.query(`
+    ALTER TABLE health_center_services
+    ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
+  `);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS center_complaints (
@@ -292,6 +296,25 @@ async function runMigrations() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `);
+
+  // Observations et suggestions deposees via le QR code du centre (sans compte).
+  // Visibles uniquement par le centre concerne.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS center_qr_feedback (
+      id BIGSERIAL PRIMARY KEY,
+      center_id BIGINT NOT NULL REFERENCES health_centers(id) ON DELETE CASCADE,
+      kind TEXT NOT NULL CHECK (kind IN ('OBSERVATION', 'SUGGESTION')),
+      message TEXT NOT NULL,
+      author_name TEXT NULL,
+      author_phone TEXT NULL,
+      is_read BOOLEAN NOT NULL DEFAULT FALSE,
+      read_at TIMESTAMPTZ NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+  await pool.query(
+    "CREATE INDEX IF NOT EXISTS idx_center_qr_feedback_center_id ON center_qr_feedback(center_id, created_at DESC);"
+  );
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS center_ratings (
@@ -978,6 +1001,10 @@ async function runMigrations() {
   );
   await pool.query(`
     ALTER TABLE patient_referrals ADD COLUMN IF NOT EXISTS service_name TEXT NULL;
+    ALTER TABLE patient_referrals ADD COLUMN IF NOT EXISTS bed_service_name TEXT NULL;
+    ALTER TABLE patient_referrals ADD COLUMN IF NOT EXISTS bed_occupied_at TIMESTAMPTZ NULL;
+    ALTER TABLE patient_referrals ADD COLUMN IF NOT EXISTS bed_released_at TIMESTAMPTZ NULL;
+    ALTER TABLE patient_referrals ADD COLUMN IF NOT EXISTS bed_released_by BIGINT NULL REFERENCES users(id) ON DELETE SET NULL;
   `);
   await pool.query(`
     ALTER TABLE patient_referrals ADD COLUMN IF NOT EXISTS rejection_reason TEXT NULL;

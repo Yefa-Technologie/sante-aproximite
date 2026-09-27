@@ -2,7 +2,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from "expo-location";
 import * as Print from "expo-print";
 import { useEffect, useRef, useState } from "react";
-import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import QRCode from "react-native-qrcode-svg";
 import { apiFetch } from "../api/client";
 import { DropdownField } from "../components/DropdownField";
@@ -62,7 +62,7 @@ function formatGeoOption(option) {
   return name || code;
 }
 
-export function ChefScreen() {
+export function ChefScreen({ initialSection } = {}) {
   const { token, user } = useAuth();
   const scrollRef = useRef(null);
   const inputRefs = useRef({});
@@ -88,6 +88,13 @@ export function ChefScreen() {
   const [districts, setDistricts]                       = useState([]);
   const [geoLoading, setGeoLoading]                     = useState(false);
   const [checkinCode, setCheckinCode]                   = useState("");
+  const [feedbackUrl, setFeedbackUrl]                   = useState("");
+  const [qrFeedbackList, setQrFeedbackList]             = useState([]);
+  const [qrFeedbackLoading, setQrFeedbackLoading]       = useState(false);
+  const [qrFeedbackFilter, setQrFeedbackFilter]         = useState("ALL");
+  const [qrFeedbackActionId, setQrFeedbackActionId]     = useState("");
+  // Message affiche en entier dans la fenetre "Detail" : { source: "QR" | "SUGGESTION", item }
+  const [messageDetail, setMessageDetail]               = useState(null);
   const [printingQr, setPrintingQr]                     = useState(false);
   const qrRef = useRef(null);
   const [visitPhone, setVisitPhone]                     = useState("");
@@ -98,6 +105,9 @@ export function ChefScreen() {
   const [referralActionLoadingId, setReferralActionLoadingId] = useState("");
   const [referralRejectingId, setReferralRejectingId]   = useState("");
   const [referralRejectDrafts, setReferralRejectDrafts] = useState({});
+  // Service d'admission choisi a la reception quand l'orientation n'en precise pas.
+  const [referralServiceDrafts, setReferralServiceDrafts] = useState({});
+  const [referralNotice, setReferralNotice]             = useState(null);
   const [activeSection, setActiveSection]               = useState("info");
   const [skipCodeGate, setSkipCodeGate]                 = useState(false);
   const [claimCode, setClaimCode]                       = useState("");
@@ -134,7 +144,7 @@ export function ChefScreen() {
       if (centerCacheKey) AsyncStorage.setItem(centerCacheKey, String(center._id)).catch(() => {});
       setCenterApprovalStatus(String(center.approvalStatus || "").toUpperCase() || null);
       apiFetch(`/centers/${center._id}/checkin-code`, { token })
-        .then((d) => setCheckinCode(d.checkinCode || ""))
+        .then((d) => { setCheckinCode(d.checkinCode || ""); setFeedbackUrl(d.feedbackUrl || ""); })
         .catch(() => {});
       setForm({
         name: center.name || "",
@@ -256,6 +266,39 @@ export function ChefScreen() {
     }
   }
 
+  async function loadQrFeedbackData({ silent = false, notifyOnNew = false } = {}) {
+    if (!token || !centerId || String(centerApprovalStatus || "").toUpperCase() !== "APPROVED") {
+      setQrFeedbackList([]); return;
+    }
+    try {
+      if (!silent) setQrFeedbackLoading(true);
+      const data = await apiFetch(`/centers/${centerId}/qr-feedback`, { token });
+      const list = Array.isArray(data) ? data : [];
+      setQrFeedbackList((previous) => {
+        const previousUnread = previous.filter((item) => !item.isRead).length;
+        const unread = list.filter((item) => !item.isRead).length;
+        if (notifyOnNew && unread > previousUnread) showSuggestionNotice("Nouveau message recu via le QR code");
+        return list;
+      });
+    } catch (err) {
+      if (!silent) setError(err.message);
+    } finally {
+      setQrFeedbackLoading(false);
+    }
+  }
+
+  async function markQrFeedbackRead(feedbackId) {
+    setQrFeedbackActionId(String(feedbackId));
+    try {
+      const updated = await apiFetch(`/centers/${centerId}/qr-feedback/${feedbackId}/read`, { token, method: "PATCH" });
+      setQrFeedbackList((list) => list.map((item) => (item._id === updated._id ? updated : item)));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setQrFeedbackActionId("");
+    }
+  }
+
   async function markSuggestionRead(suggestionId) {
     setSuggestionActionLoadingId(String(suggestionId));
     try {
@@ -284,11 +327,35 @@ export function ChefScreen() {
     }
   }
 
-  async function confirmReferralReception(referralId) {
+  async function releaseReferralBed(referralId) {
     setReferralActionLoadingId(String(referralId));
+    setReferralNotice(null);
     try {
-      await apiFetch(`/referrals/${referralId}/confirm`, { token, method: "POST" });
+      const result = await apiFetch(`/referrals/${referralId}/release-bed`, { token, method: "POST" });
+      setReferralNotice({ text: result?.message || "Place liberee", ok: true });
       await loadReferralsData({ silent: true });
+      refreshAll({ silent: true }).catch(() => {});
+    } catch (err) {
+      setReferralNotice({ text: err.message, ok: false });
+    } finally {
+      setReferralActionLoadingId("");
+    }
+  }
+
+  async function confirmReferralReception(referralId, serviceName) {
+    setReferralActionLoadingId(String(referralId));
+    setReferralNotice(null);
+    try {
+      const result = await apiFetch(`/referrals/${referralId}/confirm`, {
+        token,
+        method: "POST",
+        body: serviceName ? { serviceName } : {},
+      });
+      setReferralNotice(result?.warning
+        ? { text: result.warning, ok: false }
+        : { text: result?.message || "Reception confirmee", ok: true });
+      await loadReferralsData({ silent: true });
+      refreshAll({ silent: true }).catch(() => {});
     } catch (err) {
       setError(err.message);
     } finally {
@@ -367,8 +434,10 @@ export function ChefScreen() {
 
   useEffect(() => {
     loadSuggestionsData({ silent: true }).catch(() => {});
+    loadQrFeedbackData({ silent: true }).catch(() => {});
     const interval = setInterval(() => {
       loadSuggestionsData({ silent: true, notifyOnNew: true }).catch(() => {});
+      loadQrFeedbackData({ silent: true, notifyOnNew: true }).catch(() => {});
     }, 20000);
     return () => clearInterval(interval);
   }, [token, centerId, centerApprovalStatus]);
@@ -390,10 +459,33 @@ export function ChefScreen() {
   const isApproved = String(centerApprovalStatus || "").toUpperCase() === "APPROVED";
   const referralsPendingCount = referralsList.filter((item) => item.status === "PENDING").length;
   const suggestionsUnreadCount = suggestionsList.filter((item) => !item.isRead).length;
+  const qrFeedbackUnreadCount = qrFeedbackList.filter((item) => !item.isRead).length;
+  const filteredQrFeedback = qrFeedbackFilter === "ALL"
+    ? qrFeedbackList
+    : qrFeedbackFilter === "UNREAD"
+      ? qrFeedbackList.filter((item) => !item.isRead)
+      : qrFeedbackList.filter((item) => item.kind === qrFeedbackFilter);
 
   useEffect(() => {
     if (!isApproved && activeSection !== "info") setActiveSection("info");
   }, [isApproved, activeSection]);
+
+  const pendingSectionRef = useRef(initialSection || "");
+  useEffect(() => {
+    if (isApproved && pendingSectionRef.current) {
+      setActiveSection(pendingSectionRef.current);
+      pendingSectionRef.current = "";
+    }
+  }, [isApproved]);
+
+  function openMessageDetail(source, item) {
+    setMessageDetail({ source, item });
+    // Ouvrir le detail vaut lecture du message.
+    if (!item.isRead) {
+      if (source === "QR") markQrFeedbackRead(item._id).catch(() => {});
+      else markSuggestionRead(item.id).catch(() => {});
+    }
+  }
 
   async function confirmPatientVisit() {
     if (!visitPhone.trim()) {
@@ -428,9 +520,11 @@ export function ChefScreen() {
         <html>
           <body style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px;font-family:Helvetica,Arial,sans-serif;">
             <h2 style="margin-bottom:4px;">${f.name || "Centre de sante"}</h2>
-            <p style="color:#64748b;margin-top:0;">Scannez ce QR code pour enregistrer votre visite</p>
-            <img src="data:image/png;base64,${dataUrl}" style="width:280px;height:280px;margin:24px 0;" />
-            <p style="font-size:20px;font-weight:700;letter-spacing:2px;">${checkinCode}</p>
+            <h1 style="margin:18px 0 0;color:#1A56DB;">Votre avis compte</h1>
+            <p style="color:#334155;font-size:18px;text-align:center;max-width:420px;">Scannez ce QR code avec l'appareil photo de votre telephone pour nous transmettre une observation ou une suggestion.</p>
+            <img src="data:image/png;base64,${dataUrl}" style="width:300px;height:300px;margin:24px 0;" />
+            <p style="color:#64748b;">Aucune application ni compte necessaire. Seul le centre lit vos messages.</p>
+            <p style="color:#64748b;margin-top:24px;">Code de visite : <b style="letter-spacing:2px;">${checkinCode}</b></p>
           </body>
         </html>
       `;
@@ -540,7 +634,7 @@ export function ChefScreen() {
   function scrollToField() {
     // no-op: measureLayout against the ScrollView ref is unsupported on the new
     // architecture (logs "ref.measureLayout must be called with a ref to a
-    // native component" instead of throwing a catchable error) — disabled.
+    // native component" instead of throwing a catchable error) - disabled.
   }
 
   return (
@@ -642,6 +736,19 @@ export function ChefScreen() {
             {suggestionsUnreadCount > 0 ? (
               <View style={styles.sectionNavBadge}>
                 <Text style={styles.sectionNavBadgeText}>{suggestionsUnreadCount}</Text>
+              </View>
+            ) : null}
+          </Pressable>
+        ) : null}
+        {isApproved ? (
+          <Pressable
+            style={[styles.sectionNavItem, activeSection === "avis" && styles.sectionNavItemActive]}
+            onPress={() => { setActiveSection("avis"); loadQrFeedbackData().catch(() => {}); }}
+          >
+            <Text style={[styles.sectionNavText, activeSection === "avis" && styles.sectionNavTextActive]}>Observations & suggestions</Text>
+            {qrFeedbackUnreadCount > 0 ? (
+              <View style={styles.sectionNavBadge}>
+                <Text style={styles.sectionNavBadgeText}>{qrFeedbackUnreadCount}</Text>
               </View>
             ) : null}
           </Pressable>
@@ -895,26 +1002,34 @@ export function ChefScreen() {
         <View style={styles.complaintsPanel}>
           <Text style={styles.sectionLabel}>SUIVI DES PATIENTS</Text>
 
-          {/* QR code + code texte de visite */}
+          {/* QR code (observations & suggestions du public) + code texte de visite */}
           {checkinCode ? (
             <View style={styles.visitCodeCard}>
-              <Text style={styles.visitCodeLabel}>QR CODE DE VISITE</Text>
-              <View style={styles.qrWrapper}>
-                <QRCode
-                  value={`SANTE:${centerId}:${checkinCode}`}
-                  size={180}
-                  color={C.primary}
-                  backgroundColor="#ffffff"
-                  getRef={(ref) => (qrRef.current = ref)}
-                />
-              </View>
+              <Text style={styles.visitCodeLabel}>QR CODE DU CENTRE</Text>
+              {feedbackUrl && activeSection === "suivi" ? (
+                <View style={styles.qrWrapper}>
+                  <QRCode
+                    value={feedbackUrl}
+                    size={180}
+                    color={C.primary}
+                    backgroundColor="#ffffff"
+                    getRef={(ref) => (qrRef.current = ref)}
+                  />
+                </View>
+              ) : null}
+              <Text style={styles.visitCodeHint}>
+                Affichez ce QR code dans le centre : patients et visiteurs le scannent avec leur telephone pour envoyer une observation ou une suggestion. Les messages arrivent dans l'onglet Observations & suggestions.
+              </Text>
+              <Text style={[styles.visitCodeLabel, { marginTop: 6 }]}>CODE DE VISITE</Text>
               <Text style={styles.visitCodeValue}>{checkinCode}</Text>
               <Text style={styles.visitCodeHint}>
-                Affichez ce QR code a l'accueil. Les patients le scannent ou saisissent le code pour enregistrer leur visite.
+                Les patients saisissent ce code dans l'application pour enregistrer leur visite.
               </Text>
-              <Pressable style={[styles.outlineBtn, printingQr && { opacity: 0.6 }]} onPress={printQrCode} disabled={printingQr}>
-                <Text style={styles.outlineBtnText}>{printingQr ? "Preparation..." : "🖨️ Imprimer le QR code"}</Text>
-              </Pressable>
+              {feedbackUrl ? (
+                <Pressable style={[styles.outlineBtn, printingQr && { opacity: 0.6 }]} onPress={printQrCode} disabled={printingQr}>
+                  <Text style={styles.outlineBtnText}>{printingQr ? "Preparation..." : "🖨️ Imprimer l'affiche QR code"}</Text>
+                </Pressable>
+              ) : null}
             </View>
           ) : null}
 
@@ -945,12 +1060,23 @@ export function ChefScreen() {
             <Text style={styles.visitConfirmHint}>
               Patients orientes vers votre centre par un autre professionnel. Confirmez la reception une fois le patient arrive.
             </Text>
+            {referralNotice ? (
+              <Text style={[styles.visitMsgText, { color: referralNotice.ok ? C.green : C.amber }]}>{referralNotice.text}</Text>
+            ) : null}
             {referralsLoading ? <Text style={styles.geoLoading}>Chargement des orientations...</Text> : null}
             {!referralsLoading && referralsList.length === 0 ? (
               <Text style={shared.hint}>Aucune orientation en attente pour votre centre.</Text>
             ) : null}
             {referralsList.map((item) => (
-              <View key={item.id} style={styles.complaintCard}>
+              <View key={item.id} style={[styles.complaintCard, item.status === "PENDING" && styles.referralCardPending]}>
+                {item.status === "PENDING" ? (
+                  <View style={styles.referralNotifRow}>
+                    <View style={styles.referralBellWrap}>
+                      <Text style={styles.referralBell}>🔔</Text>
+                    </View>
+                    <Text style={styles.referralNotifText}>Nouvelle orientation a confirmer</Text>
+                  </View>
+                ) : null}
                 <View style={styles.complaintTop}>
                   <Text style={styles.complaintSubject}>
                     {item.patientName || item.patientPhone} {item.patientName ? `(${item.patientPhone})` : ""}
@@ -993,10 +1119,35 @@ export function ChefScreen() {
                       </View>
                     </View>
                   ) : (
-                    <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
+                    <View style={{ gap: 8, marginTop: 8 }}>
+                    {!item.serviceName && centerServices.length > 0 ? (
+                      <View style={{ gap: 6 }}>
+                        <Text style={styles.visitConfirmHint}>Service d'admission (une place y sera occupee) :</Text>
+                        <View style={styles.feedbackFilterRow}>
+                          {centerServices.filter((service) => service.isActive !== false).map((service) => {
+                            const active = referralServiceDrafts[item.id] === service.name;
+                            const beds = Number(service.bedsAvailable) || 0;
+                            return (
+                              <Pressable
+                                key={service.name}
+                                style={[styles.feedbackFilterChip, active && styles.feedbackFilterChipActive]}
+                                onPress={() => setReferralServiceDrafts((prev) => ({ ...prev, [item.id]: active ? "" : service.name }))}
+                              >
+                                <Text style={[styles.feedbackFilterText, active && styles.feedbackFilterTextActive]}>
+                                  {service.name} · {beds > 0 ? `${beds} libre(s)` : "complet"}
+                                </Text>
+                              </Pressable>
+                            );
+                          })}
+                        </View>
+                      </View>
+                    ) : item.serviceName ? (
+                      <Text style={styles.visitConfirmHint}>La confirmation occupera 1 place en {item.serviceName}.</Text>
+                    ) : null}
+                    <View style={{ flexDirection: "row", gap: 8 }}>
                       <Pressable
                         style={[styles.primaryBtn, { flex: 1 }, referralActionLoadingId === String(item.id) && { opacity: 0.6 }]}
-                        onPress={() => confirmReferralReception(item.id)}
+                        onPress={() => confirmReferralReception(item.id, item.serviceName ? "" : referralServiceDrafts[item.id])}
                         disabled={referralActionLoadingId === String(item.id)}
                       >
                         <Text style={styles.primaryBtnText}>
@@ -1010,6 +1161,7 @@ export function ChefScreen() {
                         <Text style={styles.dangerBtnText}>Rejeter</Text>
                       </Pressable>
                     </View>
+                    </View>
                   )
                 ) : item.status === "REJECTED" ? (
                   <>
@@ -1021,9 +1173,29 @@ export function ChefScreen() {
                     ) : null}
                   </>
                 ) : (
-                  <Text style={styles.visitMsgText}>
-                    Reçu le {item.receivedAt ? new Date(item.receivedAt).toLocaleString() : "-"}
-                  </Text>
+                  <>
+                    <Text style={styles.visitMsgText}>
+                      Reçu le {item.receivedAt ? new Date(item.receivedAt).toLocaleString() : "-"}
+                    </Text>
+                    {item.bedOccupied ? (
+                      <View style={styles.bedStatusBox}>
+                        <Text style={styles.bedStatusText}>🛏️ Place occupee en {item.bedServiceName}</Text>
+                        <Pressable
+                          style={[styles.outlineBtn, referralActionLoadingId === String(item.id) && { opacity: 0.6 }]}
+                          onPress={() => releaseReferralBed(item.id)}
+                          disabled={referralActionLoadingId === String(item.id)}
+                        >
+                          <Text style={styles.outlineBtnText}>
+                            {referralActionLoadingId === String(item.id) ? "..." : "Liberer la place (sortie du patient)"}
+                          </Text>
+                        </Pressable>
+                      </View>
+                    ) : item.bedReleasedAt ? (
+                      <Text style={shared.hint}>
+                        Place liberee en {item.bedServiceName} le {new Date(item.bedReleasedAt).toLocaleString()}
+                      </Text>
+                    ) : null}
+                  </>
                 )}
               </View>
             ))}
@@ -1103,22 +1275,161 @@ export function ChefScreen() {
                   </Text>
                 </View>
               </View>
-              <Text style={styles.complaintBody}>{item.message}</Text>
-              {!item.isRead ? (
-                <Pressable
-                  style={[styles.outlineBtn, suggestionActionLoadingId === String(item.id) && { opacity: 0.5 }]}
-                  onPress={() => markSuggestionRead(item.id)}
-                  disabled={suggestionActionLoadingId === String(item.id)}
-                >
-                  <Text style={styles.outlineBtnText}>{suggestionActionLoadingId === String(item.id) ? "..." : "Marquer comme lue"}</Text>
+              <Text style={styles.complaintBody} numberOfLines={3}>{item.message}</Text>
+              <View style={styles.messageActionsRow}>
+                <Pressable style={[styles.outlineBtn, { flex: 1 }]} onPress={() => openMessageDetail("SUGGESTION", item)}>
+                  <Text style={styles.outlineBtnText}>Detail</Text>
                 </Pressable>
-              ) : null}
+                {!item.isRead ? (
+                  <Pressable
+                    style={[styles.outlineBtn, { flex: 1 }, suggestionActionLoadingId === String(item.id) && { opacity: 0.5 }]}
+                    onPress={() => markSuggestionRead(item.id)}
+                    disabled={suggestionActionLoadingId === String(item.id)}
+                  >
+                    <Text style={styles.outlineBtnText}>{suggestionActionLoadingId === String(item.id) ? "..." : "Marquer comme lue"}</Text>
+                  </Pressable>
+                ) : null}
+              </View>
             </View>
           ))}
         </View>
       ) : null}
+
+      {/* Observations & suggestions deposees via le QR code (visibles uniquement par le centre) */}
+      {activeSection === "avis" && isApproved ? (
+        <View style={styles.complaintsPanel}>
+          <Text style={styles.sectionLabel}>OBSERVATIONS & SUGGESTIONS DU PUBLIC</Text>
+
+          <View style={styles.visitCodeCard}>
+            <Text style={styles.visitCodeLabel}>QR CODE A AFFICHER DANS LE CENTRE</Text>
+            {feedbackUrl ? (
+              <View style={styles.qrWrapper}>
+                <QRCode
+                  value={feedbackUrl}
+                  size={200}
+                  color={C.primary}
+                  backgroundColor="#ffffff"
+                  getRef={(ref) => (qrRef.current = ref)}
+                />
+              </View>
+            ) : (
+              <Text style={shared.hint}>QR code indisponible pour le moment.</Text>
+            )}
+            <Text style={styles.visitCodeHint}>
+              Patients et visiteurs le scannent avec l'appareil photo de leur telephone pour envoyer une observation ou une suggestion, sans application ni compte. Les messages arrivent ici et ne sont visibles que par votre centre.
+            </Text>
+            {feedbackUrl ? (
+              <Pressable style={[styles.outlineBtn, printingQr && { opacity: 0.6 }]} onPress={printQrCode} disabled={printingQr}>
+                <Text style={styles.outlineBtnText}>{printingQr ? "Preparation..." : "🖨️ Imprimer l'affiche QR code"}</Text>
+              </Pressable>
+            ) : null}
+          </View>
+
+          {suggestionNotice ? (
+            <View style={styles.suggestionNoticeBar}>
+              <Text style={styles.suggestionNoticeText}>{suggestionNotice}</Text>
+            </View>
+          ) : null}
+
+          <View style={styles.feedbackFilterRow}>
+            {[
+              { key: "ALL", label: `Tous (${qrFeedbackList.length})` },
+              { key: "UNREAD", label: `Non lus (${qrFeedbackUnreadCount})` },
+              { key: "OBSERVATION", label: "Observations" },
+              { key: "SUGGESTION", label: "Suggestions" },
+            ].map((option) => (
+              <Pressable
+                key={option.key}
+                style={[styles.feedbackFilterChip, qrFeedbackFilter === option.key && styles.feedbackFilterChipActive]}
+                onPress={() => setQrFeedbackFilter(option.key)}
+              >
+                <Text style={[styles.feedbackFilterText, qrFeedbackFilter === option.key && styles.feedbackFilterTextActive]}>{option.label}</Text>
+              </Pressable>
+            ))}
+          </View>
+
+          {qrFeedbackLoading ? <Text style={styles.geoLoading}>Chargement des messages...</Text> : null}
+          {!qrFeedbackLoading && filteredQrFeedback.length === 0 ? (
+            <Text style={shared.hint}>
+              {qrFeedbackList.length === 0 ? "Aucun message recu pour le moment. Affichez le QR code dans votre centre." : "Aucun message pour ce filtre."}
+            </Text>
+          ) : null}
+
+          {filteredQrFeedback.map((item) => {
+            const isSuggestion = item.kind === "SUGGESTION";
+            return (
+              <View key={item._id} style={[styles.complaintCard, !item.isRead && { borderLeftWidth: 4, borderLeftColor: C.amber }]}>
+                <View style={styles.complaintTop}>
+                  <View style={[styles.badge, { backgroundColor: isSuggestion ? C.purpleLight : C.primaryLight }]}>
+                    <Text style={[styles.badgeText, { color: isSuggestion ? C.purple : C.primary }]}>
+                      {isSuggestion ? "SUGGESTION" : "OBSERVATION"}
+                    </Text>
+                  </View>
+                  <View style={[styles.badge, { backgroundColor: item.isRead ? C.greenLight : C.amberLight }]}>
+                    <Text style={[styles.badgeText, { color: item.isRead ? C.green : C.amber }]}>{item.isRead ? "LU" : "NON LU"}</Text>
+                  </View>
+                </View>
+                <Text style={styles.complaintBody} numberOfLines={3}>{item.message}</Text>
+                <Text style={shared.hint}>
+                  {item.authorName || "Anonyme"}{item.authorPhone ? ` · ${item.authorPhone}` : ""} · {item.createdAt ? new Date(item.createdAt).toLocaleString("fr-FR") : ""}
+                </Text>
+                <View style={styles.messageActionsRow}>
+                  <Pressable style={[styles.outlineBtn, { flex: 1 }]} onPress={() => openMessageDetail("QR", item)}>
+                    <Text style={styles.outlineBtnText}>Detail</Text>
+                  </Pressable>
+                  {!item.isRead ? (
+                    <Pressable
+                      style={[styles.outlineBtn, { flex: 1 }, qrFeedbackActionId === item._id && { opacity: 0.5 }]}
+                      onPress={() => markQrFeedbackRead(item._id)}
+                      disabled={qrFeedbackActionId === item._id}
+                    >
+                      <Text style={styles.outlineBtnText}>{qrFeedbackActionId === item._id ? "..." : "Marquer comme lu"}</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+              </View>
+            );
+          })}
+        </View>
+      ) : null}
       </>
       )}
+
+      <Modal visible={!!messageDetail} transparent animationType="fade" onRequestClose={() => setMessageDetail(null)}>
+        <Pressable style={styles.detailOverlay} onPress={() => setMessageDetail(null)}>
+          <Pressable style={styles.detailCard} onPress={() => {}}>
+            {messageDetail ? (() => {
+              const { source, item } = messageDetail;
+              const isQr = source === "QR";
+              const isSuggestion = isQr ? item.kind === "SUGGESTION" : true;
+              const author = isQr ? (item.authorName || "Anonyme") : (item.userFullName || "Usager");
+              return (
+                <>
+                  <View style={styles.complaintTop}>
+                    <View style={[styles.badge, { backgroundColor: isSuggestion ? C.purpleLight : C.primaryLight }]}>
+                      <Text style={[styles.badgeText, { color: isSuggestion ? C.purple : C.primary }]}>
+                        {isQr ? (isSuggestion ? "SUGGESTION" : "OBSERVATION") : "OBSERVATION / SUGGESTION"}
+                      </Text>
+                    </View>
+                    <Text style={styles.detailSource}>{isQr ? "Via QR code" : "Via l'application"}</Text>
+                  </View>
+                  <ScrollView style={styles.detailScroll} contentContainerStyle={{ paddingVertical: 4 }}>
+                    <Text selectable style={styles.detailMessage}>{item.message}</Text>
+                  </ScrollView>
+                  <View style={styles.detailMetaBox}>
+                    <Text style={styles.detailMeta}>👤 {author}</Text>
+                    {isQr && item.authorPhone ? <Text style={styles.detailMeta}>📞 {item.authorPhone}</Text> : null}
+                    {item.createdAt ? <Text style={styles.detailMeta}>🕒 {new Date(item.createdAt).toLocaleString("fr-FR")}</Text> : null}
+                  </View>
+                  <Pressable style={styles.primaryBtn} onPress={() => setMessageDetail(null)}>
+                    <Text style={styles.primaryBtnText}>Fermer</Text>
+                  </Pressable>
+                </>
+              );
+            })() : null}
+          </Pressable>
+        </Pressable>
+      </Modal>
     </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -1145,18 +1456,22 @@ const styles = StyleSheet.create({
 
   sectionNav: {
     flexDirection: "row",
-    gap: 8,
+    flexWrap: "wrap",
+    gap: 6,
     backgroundColor: C.surfaceAlt,
-    borderRadius: R.full,
+    borderRadius: R.lg,
     padding: 4,
   },
   sectionNavItem: {
-    flex: 1,
+    flexGrow: 1,
+    flexBasis: "22%",
+    minWidth: 130,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: 6,
     paddingVertical: 9,
+    paddingHorizontal: 10,
     borderRadius: R.full,
   },
   sectionNavItemActive: { backgroundColor: ACCENT, ...S.sm },
@@ -1206,6 +1521,29 @@ const styles = StyleSheet.create({
   badge:     { borderRadius: R.full, paddingHorizontal: 8, paddingVertical: 3 },
   badgeText: { fontSize: 10, fontWeight: "800" },
 
+  bedStatusBox: { gap: 8, backgroundColor: C.orangeLight, borderRadius: R.sm, padding: 10, marginTop: 4 },
+  bedStatusText: { fontSize: 13, fontWeight: "800", color: C.orange },
+  messageActionsRow: { flexDirection: "row", gap: 8 },
+  referralCardPending: { borderLeftWidth: 4, borderLeftColor: C.amber },
+  referralNotifRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  referralBellWrap: {
+    width: 28, height: 28, borderRadius: 14, backgroundColor: C.amberLight,
+    alignItems: "center", justifyContent: "center",
+  },
+  referralBell: { fontSize: 15 },
+  referralNotifText: { fontSize: 12, fontWeight: "800", color: C.amber },
+  detailOverlay: { flex: 1, backgroundColor: "rgba(15,23,42,0.55)", alignItems: "center", justifyContent: "center", padding: 20 },
+  detailCard: { width: "100%", maxWidth: 520, maxHeight: "85%", backgroundColor: C.surface, borderRadius: R.md, padding: 18, gap: 12, ...S.sm },
+  detailSource: { fontSize: 12, color: C.textMuted, fontWeight: "600" },
+  detailScroll: { maxHeight: 360 },
+  detailMessage: { fontSize: 15, lineHeight: 22, color: C.textDark },
+  detailMetaBox: { gap: 4, borderTopWidth: 1, borderTopColor: C.border, paddingTop: 10 },
+  detailMeta: { fontSize: 13, color: C.textMed },
+  feedbackFilterRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  feedbackFilterChip: { borderWidth: 1.5, borderColor: C.border, borderRadius: R.full, paddingHorizontal: 12, paddingVertical: 6, backgroundColor: C.surface },
+  feedbackFilterChipActive: { backgroundColor: C.primary, borderColor: C.primary },
+  feedbackFilterText: { color: C.textMed, fontWeight: "600", fontSize: 12 },
+  feedbackFilterTextActive: { color: "#fff" },
   complaintsPanel: { borderTopWidth: 1, borderTopColor: C.border, paddingTop: 14, gap: 12 },
   statsRow:  { flexDirection: "row", gap: 10 },
   statCard:  { flex: 1, backgroundColor: ACCENT + "15", borderRadius: R.sm, borderWidth: 1, borderColor: ACCENT + "30", padding: 12, alignItems: "center", gap: 2 },

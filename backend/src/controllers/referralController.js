@@ -17,6 +17,11 @@ function mapReferralRow(row) {
     receivedAt: row.received_at,
     rejectionReason: row.rejection_reason || null,
     createdAt: row.created_at,
+    // Place occupee dans un service du centre d'accueil, jusqu'a sa liberation par le responsable.
+    bedServiceName: row.bed_service_name || null,
+    bedOccupiedAt: row.bed_occupied_at || null,
+    bedReleasedAt: row.bed_released_at || null,
+    bedOccupied: Boolean(row.bed_occupied_at) && !row.bed_released_at,
   };
 }
 
@@ -60,6 +65,22 @@ export async function createReferral(req, res) {
     return res.status(404).json({ message: "Centre de destination introuvable" });
   }
 
+  // Un centre ne peut pas s'orienter un patient a lui-meme.
+  const ownCenter = await pool.query(
+    `SELECT 1
+     FROM health_centers hc
+     JOIN users u ON u.id = $2
+     WHERE hc.id = $1
+       AND (hc.created_by = u.id
+         OR hc.id = u.center_id
+         OR (u.establishment_code IS NOT NULL AND upper(hc.establishment_code) = upper(u.establishment_code)))
+     LIMIT 1`,
+    [destinationCenterId, req.user.id]
+  );
+  if (ownCenter.rowCount > 0) {
+    return res.status(400).json({ message: "Vous ne pouvez pas orienter un patient vers votre propre centre." });
+  }
+
   const inserted = await pool.query(
     `INSERT INTO patient_referrals (origin_user_id, destination_center_id, patient_phone, patient_name, service_name, reason)
      VALUES ($1, $2, $3, $4, $5, $6)
@@ -91,6 +112,7 @@ export async function listIncomingReferrals(req, res) {
       SELECT
         pr.id, pr.origin_user_id, pr.destination_center_id, pr.patient_phone,
         pr.patient_name, pr.service_name, pr.reason, pr.status, pr.received_by, pr.received_at, pr.rejection_reason, pr.created_at,
+        pr.bed_service_name, pr.bed_occupied_at, pr.bed_released_at,
         u.full_name AS origin_user_name,
         hc.name AS destination_center_name
       FROM patient_referrals pr
@@ -111,6 +133,7 @@ export async function listOutgoingReferrals(req, res) {
       SELECT
         pr.id, pr.origin_user_id, pr.destination_center_id, pr.patient_phone,
         pr.patient_name, pr.service_name, pr.reason, pr.status, pr.received_by, pr.received_at, pr.rejection_reason, pr.created_at,
+        pr.bed_service_name, pr.bed_occupied_at, pr.bed_released_at,
         u.full_name AS origin_user_name,
         hc.name AS destination_center_name
       FROM patient_referrals pr
@@ -125,10 +148,11 @@ export async function listOutgoingReferrals(req, res) {
   return res.json(result.rows.map(mapReferralRow));
 }
 
-async function loadReferralForDestination(req, referralId) {
+async function loadReferralForDestination(req, referralId, { allowProcessed = false } = {}) {
   const referral = await pool.query(
     `
-      SELECT pr.id, pr.destination_center_id, pr.status, pr.origin_user_id, pr.patient_name, hc.name AS destination_center_name
+      SELECT pr.id, pr.destination_center_id, pr.status, pr.origin_user_id, pr.patient_name, pr.service_name,
+             pr.bed_service_name, pr.bed_occupied_at, pr.bed_released_at, hc.name AS destination_center_name
       FROM patient_referrals pr
       JOIN health_centers hc ON hc.id = pr.destination_center_id
       WHERE pr.id = $1
@@ -145,7 +169,7 @@ async function loadReferralForDestination(req, referralId) {
     return { error: { status: 403, message: "Cette orientation ne concerne pas votre centre" } };
   }
 
-  if (referral.rows[0].status !== "PENDING") {
+  if (!allowProcessed && referral.rows[0].status !== "PENDING") {
     return { error: { status: 400, message: "Cette orientation a deja ete traitee" } };
   }
 
@@ -163,12 +187,62 @@ export async function confirmReferralReception(req, res) {
     return res.status(error.status).json({ message: error.message });
   }
 
-  await pool.query(
-    `UPDATE patient_referrals
-     SET status = 'RECEIVED', received_by = $2, received_at = NOW()
-     WHERE id = $1`,
-    [referralId, req.user.id]
-  );
+  // Service d'admission : celui de l'orientation, sinon celui choisi par le centre a la reception.
+  const requestedService = String(row.service_name || req.body?.serviceName || "").trim();
+
+  const client = await pool.connect();
+  let bedServiceName = null;
+  let bedWarning = null;
+  try {
+    await client.query("BEGIN");
+    const updated = await client.query(
+      `UPDATE patient_referrals
+       SET status = 'RECEIVED', received_by = $2, received_at = NOW()
+       WHERE id = $1 AND status = 'PENDING'`,
+      [referralId, req.user.id]
+    );
+    if (updated.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ message: "Cette orientation a deja ete traitee" });
+    }
+
+    if (requestedService) {
+      const service = await client.query(
+        `SELECT id, name, beds_available, is_active
+         FROM health_center_services
+         WHERE center_id = $1 AND lower(trim(name)) = lower($2)
+         ORDER BY id
+         LIMIT 1
+         FOR UPDATE`,
+        [row.destination_center_id, requestedService]
+      );
+      if (service.rowCount === 0) {
+        bedWarning = `Le service "${requestedService}" n'existe pas dans votre centre : aucune place n'a ete decomptee.`;
+      } else if (Number(service.rows[0].beds_available) <= 0) {
+        bedWarning = `Aucune place libre en ${service.rows[0].name} : la place n'a pas ete decomptee.`;
+      } else {
+        await client.query(
+          `UPDATE health_center_services
+           SET beds_available = beds_available - 1, beds_occupied = beds_occupied + 1
+           WHERE id = $1`,
+          [service.rows[0].id]
+        );
+        bedServiceName = service.rows[0].name;
+        await client.query(
+          `UPDATE patient_referrals
+           SET bed_service_name = $2, bed_occupied_at = NOW(), service_name = COALESCE(service_name, $2)
+           WHERE id = $1`,
+          [referralId, bedServiceName]
+        );
+      }
+    }
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
 
   sendPushNotificationToUser(Number(row.origin_user_id), {
     title: "Patient reçu",
@@ -176,7 +250,64 @@ export async function confirmReferralReception(req, res) {
     data: { type: "REFERRAL_RECEIVED", referralId: String(referralId) },
   }).catch(() => {});
 
-  return res.json({ success: true, message: "Reception confirmee" });
+  return res.json({
+    success: true,
+    message: bedServiceName
+      ? `Reception confirmee : 1 place occupee en ${bedServiceName}.`
+      : "Reception confirmee",
+    bedServiceName,
+    warning: bedWarning,
+  });
+}
+
+// Le responsable libere la place occupee par le patient (sortie, transfert...).
+export async function releaseReferralBed(req, res) {
+  const referralId = Number(req.params.id);
+  if (!Number.isInteger(referralId) || referralId <= 0) {
+    return res.status(400).json({ message: "ID d'orientation invalide" });
+  }
+
+  const { row, error } = await loadReferralForDestination(req, referralId, { allowProcessed: true });
+  if (error) {
+    return res.status(error.status).json({ message: error.message });
+  }
+  if (!row.bed_occupied_at || row.bed_released_at) {
+    return res.status(400).json({ message: "Aucune place occupee a liberer pour ce patient" });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const released = await client.query(
+      `UPDATE patient_referrals
+       SET bed_released_at = NOW(), bed_released_by = $2
+       WHERE id = $1 AND bed_occupied_at IS NOT NULL AND bed_released_at IS NULL`,
+      [referralId, req.user.id]
+    );
+    if (released.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ message: "Cette place a deja ete liberee" });
+    }
+    // Si le service a ete renomme ou supprime entre-temps, on libere seulement l'orientation.
+    await client.query(
+      `UPDATE health_center_services
+       SET beds_available = beds_available + 1, beds_occupied = GREATEST(beds_occupied - 1, 0)
+       WHERE id = (
+         SELECT id FROM health_center_services
+         WHERE center_id = $1 AND lower(trim(name)) = lower($2)
+         ORDER BY id LIMIT 1
+       )`,
+      [row.destination_center_id, row.bed_service_name]
+    );
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+
+  return res.json({ success: true, message: `Place liberee en ${row.bed_service_name}.` });
 }
 
 export async function rejectReferralReception(req, res) {

@@ -23,6 +23,7 @@ const CACHE_TTL_MS = 15 * 60 * 1000;
 
 function isAuthPath(path) {
   return (
+    path.startsWith("/auth/profile") ||
     path.startsWith("/auth/login") ||
     path.startsWith("/auth/register") ||
     path.startsWith("/auth/refresh") ||

@@ -68,7 +68,13 @@ export function AuthProvider({ children }) {
     await AsyncStorage.multiRemove([TOKEN_KEY, REFRESH_TOKEN_KEY, USER_KEY]);
   };
 
-  const value = useMemo(() => ({ token, refreshToken, user, ready, login, logout }), [token, refreshToken, user, ready]);
+  const updateProfile = async (profile) => {
+    const nextUser = { ...user, fullName: profile.fullName, email: profile.email, phoneNumber: profile.phoneNumber };
+    await AsyncStorage.setItem(USER_KEY, JSON.stringify(nextUser));
+    setUser(nextUser);
+  };
+
+  const value = useMemo(() => ({ token, refreshToken, user, ready, login, logout, updateProfile }), [token, refreshToken, user, ready]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

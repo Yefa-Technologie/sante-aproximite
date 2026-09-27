@@ -27,6 +27,7 @@ import {
   updateCenter,
   updateCenterService
 } from "../controllers/healthCenterController.js";
+import { listCenterQrFeedback, markQrFeedbackRead } from "../controllers/qrFeedbackController.js";
 import { requireAuth, requireRole } from "../middlewares/authMiddleware.js";
 
 const router = Router();
@@ -57,6 +58,8 @@ router.post("/:id/services", requireAuth, requireRole(ETABLISSEMENT_ROLES), addS
 router.patch("/:id/services/:serviceName", requireAuth, requireRole([...ADMIN_ROLES, ...ETABLISSEMENT_ROLES]), updateCenterService);
 router.post("/:id/rating", requireAuth, rateCenter);
 router.get("/:id/checkin-code", requireAuth, requireRole(ETABLISSEMENT_ROLES), getCheckinCode);
+router.get("/:id/qr-feedback", requireAuth, requireRole(ETABLISSEMENT_ROLES), listCenterQrFeedback);
+router.patch("/:id/qr-feedback/:feedbackId/read", requireAuth, requireRole(ETABLISSEMENT_ROLES), markQrFeedbackRead);
 router.post("/:id/checkin", requireAuth, checkinByCode);
 router.post("/:id/declare-visit", requireAuth, selfDeclareVisit);
 router.post("/:id/confirm-visit", requireAuth, requireRole(ETABLISSEMENT_ROLES), confirmVisitByPro);

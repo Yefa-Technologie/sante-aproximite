@@ -23,6 +23,7 @@ import {
 import { fetchAppSettings, loadCachedAppSettings } from "../storage/appSettings";
 import { useAuth } from "../context/AuthContext";
 import { C, R, S, shared } from "../theme";
+import { activeServices, parsePlatformItems, toOfferingKey } from "../utils/centerOfferings";
 
 const MAX_MAP_CENTER_MARKERS = 200;
 const MAX_MAP_BASE_MARKERS = 120;
@@ -98,6 +99,12 @@ export function NearbyScreen() {
   const [cityQuery, setCityQuery] = useState("");
   const [selectedCity, setSelectedCity] = useState("");
   const [selectedCenterId, setSelectedCenterId] = useState("");
+  const [offeringKind, setOfferingKind] = useState("SERVICE");
+  const [offeringQuery, setOfferingQuery] = useState("");
+  const [selectedOfferingKey, setSelectedOfferingKey] = useState("");
+  const [offeringCityFilter, setOfferingCityFilter] = useState("");
+  const [offeringOnlyAvailable, setOfferingOnlyAvailable] = useState(false);
+  const [offeringSort, setOfferingSort] = useState("DISTANCE");
   const [emergencyBases, setEmergencyBases] = useState([]);
   const [baseServiceFilter, setBaseServiceFilter] = useState("ALL");
   const [isMapFullscreen, setIsMapFullscreen] = useState(false);
@@ -495,9 +502,111 @@ export function NearbyScreen() {
     return list.sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
   }, [allCenters, selectedCity, searchQuery]);
 
+  const districtNameByCode = useMemo(() => {
+    const map = new Map();
+    for (const district of allDistricts) map.set(String(district.code || "").toUpperCase(), district.name);
+    return map;
+  }, [allDistricts]);
+
+  // Catalogue des services / equipements du plateau technique proposes par au moins un centre.
+  const offeringOptions = useMemo(() => {
+    const groups = new Map();
+    for (const center of allCenters) {
+      const labels = offeringKind === "SERVICE"
+        ? activeServices(center).map((service) => ({ label: service.name, beds: Number(service.bedsAvailable) || 0 }))
+        : parsePlatformItems(center.technicalPlatform).map((label) => ({ label, beds: 0 }));
+      const seen = new Set();
+      for (const { label, beds } of labels) {
+        const key = toOfferingKey(label);
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        const group = groups.get(key) || { key, labels: new Map(), centerCount: 0, bedsAvailable: 0 };
+        group.labels.set(label.trim(), (group.labels.get(label.trim()) || 0) + 1);
+        group.centerCount += 1;
+        group.bedsAvailable += beds;
+        groups.set(key, group);
+      }
+    }
+    const list = [...groups.values()].map((group) => ({
+      key: group.key,
+      label: [...group.labels.entries()].sort((a, b) => b[1] - a[1])[0][0],
+      centerCount: group.centerCount,
+      bedsAvailable: group.bedsAvailable,
+    }));
+    const q = toOfferingKey(offeringQuery);
+    return list
+      .filter((item) => !q || item.key.includes(q))
+      .sort((a, b) => b.centerCount - a.centerCount || a.label.localeCompare(b.label));
+  }, [allCenters, offeringKind, offeringQuery]);
+
+  const selectedOffering = offeringOptions.find((item) => item.key === selectedOfferingKey)
+    || (selectedOfferingKey ? { key: selectedOfferingKey, label: selectedOfferingKey } : null);
+
+  // Tous les centres qui proposent le service/equipement choisi, avec distance et places.
+  const offeringCentersAll = useMemo(() => {
+    if (!selectedOfferingKey) return [];
+    const list = [];
+    for (const center of allCenters) {
+      let matchedService = null;
+      if (offeringKind === "SERVICE") {
+        matchedService = activeServices(center).find((service) => toOfferingKey(service.name) === selectedOfferingKey) || null;
+        if (!matchedService) continue;
+      } else if (!parsePlatformItems(center.technicalPlatform).some((item) => toOfferingKey(item) === selectedOfferingKey)) {
+        continue;
+      }
+      let distanceKm = null;
+      if (coords && hasValidCoordinates(center)) {
+        distanceKm = Number(haversineKm(coords.lat, coords.lon, Number(center.location.coordinates[1]), Number(center.location.coordinates[0])).toFixed(2));
+      }
+      list.push({ ...center, services: activeServices(center), matchedService, distanceKm });
+    }
+    return list;
+  }, [allCenters, selectedOfferingKey, offeringKind, coords]);
+
+  const offeringCityOptions = useMemo(() => {
+    const counts = new Map();
+    for (const center of offeringCentersAll) {
+      const code = String(center.districtCode || "").toUpperCase();
+      if (!code) continue;
+      counts.set(code, (counts.get(code) || 0) + 1);
+    }
+    return [...counts.entries()]
+      .map(([code, count]) => ({ code, count, name: districtNameByCode.get(code) || code }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [offeringCentersAll, districtNameByCode]);
+
+  const offeringCenters = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    let list = offeringCentersAll;
+    if (offeringCityFilter) list = list.filter((center) => String(center.districtCode || "").toUpperCase() === offeringCityFilter);
+    if (offeringOnlyAvailable && offeringKind === "SERVICE") list = list.filter((center) => (Number(center.matchedService?.bedsAvailable) || 0) > 0);
+    if (q) {
+      list = list.filter((center) =>
+        String(center.name || "").toLowerCase().includes(q) || String(center.address || "").toLowerCase().includes(q));
+    }
+    const byDistance = (a, b) => {
+      if (a.distanceKm == null && b.distanceKm == null) return String(a.name || "").localeCompare(String(b.name || ""));
+      if (a.distanceKm == null) return 1;
+      if (b.distanceKm == null) return -1;
+      return a.distanceKm - b.distanceKm;
+    };
+    const byBeds = (a, b) => (Number(b.matchedService?.bedsAvailable) || 0) - (Number(a.matchedService?.bedsAvailable) || 0) || byDistance(a, b);
+    return [...list].sort(offeringSort === "BEDS" && offeringKind === "SERVICE" ? byBeds : byDistance);
+  }, [offeringCentersAll, offeringCityFilter, offeringOnlyAvailable, offeringKind, offeringSort, searchQuery]);
+
+  function openOffering(key) {
+    setSelectedOfferingKey(key);
+    setOfferingCityFilter("");
+    setOfferingOnlyAvailable(false);
+    setOfferingSort("DISTANCE");
+    setSearchQuery("");
+    trackEvent("nearby", "browse_by_offering", { kind: offeringKind, key });
+  }
+
   const activeCenters =
     browseMode === "PROXIMITY" ? filteredCenters
     : browseMode === "CITY" ? selectedCityCenters
+    : browseMode === "SERVICE" ? offeringCenters
     : regionFilteredCenters;
 
   const safeEmergencyBases = useMemo(() => emergencyBases.filter(hasValidBaseCoordinates), [emergencyBases]);
@@ -619,6 +728,14 @@ export function NearbyScreen() {
             </Text>
           </Pressable>
           <Pressable
+            style={[styles.modeToggleBtn, browseMode === "SERVICE" && styles.modeToggleBtnActive]}
+            onPress={() => { setCityQuery(""); setSelectedCity(""); setBrowseMode("SERVICE"); }}
+          >
+            <Text style={[styles.modeToggleText, browseMode === "SERVICE" && styles.modeToggleTextActive]}>
+              Par service
+            </Text>
+          </Pressable>
+          <Pressable
             style={[styles.modeToggleBtn, browseMode === "REGION" && styles.modeToggleBtnActive]}
             onPress={() => { setCityQuery(""); setSelectedCity(""); setBrowseMode("REGION"); }}
           >
@@ -662,7 +779,99 @@ export function NearbyScreen() {
         </View>
       ) : null}
 
-      {!isMapFullscreen && (browseMode !== "CITY" || selectedCity) ? (
+      {!isMapFullscreen && browseMode === "SERVICE" && !selectedOfferingKey ? (
+        <View style={styles.offeringPickerWrap}>
+          <View style={styles.offeringKindRow}>
+            {[
+              { key: "SERVICE", label: "Services" },
+              { key: "PLATFORM", label: "Plateau technique" },
+            ].map((option) => (
+              <Pressable
+                key={option.key}
+                style={[styles.geoChip, offeringKind === option.key && styles.geoChipActive]}
+                onPress={() => { setOfferingKind(option.key); setOfferingQuery(""); }}
+              >
+                <Text style={[styles.geoChipText, offeringKind === option.key && styles.geoChipTextActive]}>{option.label}</Text>
+              </Pressable>
+            ))}
+          </View>
+          <TextInput
+            style={styles.cityInput}
+            value={offeringQuery}
+            onChangeText={setOfferingQuery}
+            placeholder={offeringKind === "SERVICE" ? "Rechercher un service (ex: Pediatrie, Maternite)..." : "Rechercher un equipement (ex: Radiologie, Scanner)..."}
+            placeholderTextColor={C.textLight}
+          />
+        </View>
+      ) : null}
+
+      {!isMapFullscreen && browseMode === "SERVICE" && selectedOfferingKey ? (
+        <View style={styles.geoFilterWrap}>
+          <View style={[styles.cityHeaderRow, { paddingHorizontal: 0 }]}>
+            <Pressable style={styles.cityBackBtn} onPress={() => { setSelectedOfferingKey(""); setSearchQuery(""); }}>
+              <Text style={styles.cityBackBtnText}>‹ {offeringKind === "SERVICE" ? "Services" : "Plateau technique"}</Text>
+            </Pressable>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.cityHeaderTitle} numberOfLines={1}>{selectedOffering?.label}</Text>
+              <Text style={styles.offeringSummary}>
+                {offeringCenters.length} centre{offeringCenters.length > 1 ? "s" : ""}
+                {offeringKind === "SERVICE" && canSeeBedAvailability
+                  ? ` · ${offeringCenters.reduce((sum, center) => sum + (Number(center.matchedService?.bedsAvailable) || 0), 0)} place(s) disponible(s)`
+                  : ""}
+                {!coords ? " · activez la localisation pour les distances" : ""}
+              </Text>
+            </View>
+          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.geoChipRow}>
+            <Pressable
+              style={[styles.geoChip, !offeringCityFilter && styles.geoChipActive]}
+              onPress={() => setOfferingCityFilter("")}
+            >
+              <Text style={[styles.geoChipText, !offeringCityFilter && styles.geoChipTextActive]}>Toutes les villes</Text>
+            </Pressable>
+            {offeringCityOptions.map((city) => {
+              const active = offeringCityFilter === city.code;
+              return (
+                <Pressable
+                  key={city.code}
+                  style={[styles.geoChip, active && styles.geoChipActive]}
+                  onPress={() => setOfferingCityFilter(active ? "" : city.code)}
+                >
+                  <Text style={[styles.geoChipText, active && styles.geoChipTextActive]}>{city.name} ({city.count})</Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.geoChipRow}>
+            <Pressable
+              style={[styles.geoChip, offeringSort === "DISTANCE" && styles.geoChipActive]}
+              onPress={() => setOfferingSort("DISTANCE")}
+            >
+              <Text style={[styles.geoChipText, offeringSort === "DISTANCE" && styles.geoChipTextActive]}>Plus proches</Text>
+            </Pressable>
+            {offeringKind === "SERVICE" && canSeeBedAvailability ? (
+              <>
+                <Pressable
+                  style={[styles.geoChip, offeringSort === "BEDS" && styles.geoChipActive]}
+                  onPress={() => setOfferingSort("BEDS")}
+                >
+                  <Text style={[styles.geoChipText, offeringSort === "BEDS" && styles.geoChipTextActive]}>Plus de places</Text>
+                </Pressable>
+                <Pressable
+                  style={[styles.geoChip, offeringOnlyAvailable && styles.geoChipActive]}
+                  onPress={() => setOfferingOnlyAvailable((value) => !value)}
+                >
+                  <Text style={[styles.geoChipText, offeringOnlyAvailable && styles.geoChipTextActive]}>
+                    {offeringOnlyAvailable ? "✓ " : ""}Places disponibles uniquement
+                  </Text>
+                </Pressable>
+              </>
+            ) : null}
+          </ScrollView>
+        </View>
+      ) : null}
+
+      {!isMapFullscreen && (browseMode !== "CITY" || selectedCity) && (browseMode !== "SERVICE" || selectedOfferingKey) ? (
         <View style={styles.toolbar}>
           {browseMode === "PROXIMITY" ? (
             <View style={styles.radiusWrap}>
@@ -682,7 +891,9 @@ export function NearbyScreen() {
             placeholder={
               browseMode === "CITY"
                 ? "Nom, plateau technique ou service..."
-                : "Rechercher par nom ou service..."
+                : browseMode === "SERVICE"
+                  ? "Filtrer par nom du centre ou adresse..."
+                  : "Rechercher par nom ou service..."
             }
             placeholderTextColor={C.textLight}
           />
@@ -843,7 +1054,43 @@ export function NearbyScreen() {
         />
       ) : null}
 
-      {!isMapFullscreen && !(browseMode === "CITY" && !selectedCity) ? (
+      {!isMapFullscreen && browseMode === "SERVICE" && !selectedOfferingKey ? (
+        <FlatList
+          style={styles.list}
+          contentContainerStyle={styles.listContent}
+          showsVerticalScrollIndicator={false}
+          data={offeringOptions}
+          keyExtractor={(item) => item.key}
+          initialNumToRender={16}
+          keyboardShouldPersistTaps="handled"
+          ListEmptyComponent={
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyStateText}>
+                {allCenters.length === 0
+                  ? "Chargement du catalogue des centres..."
+                  : offeringKind === "SERVICE" ? "Aucun service trouve." : "Aucun equipement trouve."}
+              </Text>
+            </View>
+          }
+          renderItem={({ item }) => (
+            <Pressable style={styles.cityRow} onPress={() => openOffering(item.key)}>
+              <View style={[styles.cityRowIcon, { backgroundColor: offeringKind === "SERVICE" ? C.primary : C.purple }]}>
+                <Text style={styles.cityRowIconText}>{offeringKind === "SERVICE" ? "🩺" : "🔬"}</Text>
+              </View>
+              <View style={styles.cityRowTextWrap}>
+                <Text style={styles.cityRowName} numberOfLines={1}>{item.label}</Text>
+                <Text style={styles.cityRowCount}>
+                  {item.centerCount} centre{item.centerCount > 1 ? "s" : ""}
+                  {offeringKind === "SERVICE" && canSeeBedAvailability ? ` · ${item.bedsAvailable} place(s) disponible(s)` : ""}
+                </Text>
+              </View>
+              <Text style={styles.cityRowArrow}>›</Text>
+            </Pressable>
+          )}
+        />
+      ) : null}
+
+      {!isMapFullscreen && !(browseMode === "CITY" && !selectedCity) && !(browseMode === "SERVICE" && !selectedOfferingKey) ? (
         <FlatList
           style={styles.list}
           contentContainerStyle={styles.listContent}
@@ -885,6 +1132,34 @@ export function NearbyScreen() {
                   </View>
                 ) : null}
               </View>
+
+              {browseMode === "SERVICE" ? (
+                <View style={styles.offeringMatchBox}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.offeringMatchLabel}>{offeringKind === "SERVICE" ? "SERVICE" : "PLATEAU TECHNIQUE"}</Text>
+                    <Text style={styles.offeringMatchName}>{center.matchedService?.name || selectedOffering?.label}</Text>
+                    {center.districtCode ? (
+                      <Text style={styles.offeringMatchCity}>📍 {districtNameByCode.get(String(center.districtCode).toUpperCase()) || center.districtCode}</Text>
+                    ) : null}
+                  </View>
+                  {offeringKind === "SERVICE" && canSeeBedAvailability ? (
+                    <View style={[styles.offeringBedsBadge, { backgroundColor: (Number(center.matchedService?.bedsAvailable) || 0) > 0 ? C.greenLight : C.redLight }]}>
+                      <Text style={[styles.offeringBedsValue, { color: (Number(center.matchedService?.bedsAvailable) || 0) > 0 ? C.green : C.red }]}>
+                        {Number(center.matchedService?.bedsAvailable) || 0}
+                      </Text>
+                      <Text style={[styles.offeringBedsText, { color: (Number(center.matchedService?.bedsAvailable) || 0) > 0 ? C.green : C.red }]}>
+                        {(Number(center.matchedService?.bedsAvailable) || 0) > 0 ? "place(s) libre(s)" : "complet"}
+                      </Text>
+                    </View>
+                  ) : null}
+                </View>
+              ) : null}
+
+              {browseMode === "SERVICE" ? (
+                <Pressable style={styles.offeringNavBtn} onPress={() => startNavigation(center)}>
+                  <Text style={styles.offeringNavBtnText}>🧭 Itineraire</Text>
+                </Pressable>
+              ) : null}
 
               <View style={styles.divider} />
 
@@ -1119,6 +1394,43 @@ export function NearbyScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: C.bg },
+
+  offeringPickerWrap: {
+    gap: 10,
+    paddingHorizontal: 12,
+    paddingTop: 10,
+    paddingBottom: 10,
+    backgroundColor: C.surface,
+    borderBottomWidth: 1,
+    borderBottomColor: C.border,
+  },
+  offeringKindRow: { flexDirection: "row", gap: 8 },
+  offeringSummary: { fontSize: 12, color: C.textMuted, fontWeight: "600", marginTop: 2 },
+  offeringMatchBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    backgroundColor: C.primaryLight,
+    borderRadius: R.sm,
+    padding: 10,
+    marginTop: 8,
+  },
+  offeringMatchLabel: { fontSize: 10, fontWeight: "800", color: C.primary, letterSpacing: 0.8 },
+  offeringMatchName: { fontSize: 15, fontWeight: "800", color: C.textDark, marginTop: 1 },
+  offeringMatchCity: { fontSize: 12, color: C.textMed, marginTop: 3 },
+  offeringBedsBadge: { borderRadius: R.sm, paddingHorizontal: 12, paddingVertical: 6, alignItems: "center", minWidth: 84 },
+  offeringBedsValue: { fontSize: 22, fontWeight: "900" },
+  offeringBedsText: { fontSize: 10, fontWeight: "800" },
+  offeringNavBtn: {
+    alignSelf: "flex-start",
+    borderWidth: 1.5,
+    borderColor: C.primary,
+    borderRadius: R.sm,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    marginTop: 8,
+  },
+  offeringNavBtnText: { color: C.primary, fontWeight: "700", fontSize: 13 },
 
   modeToggleRow: {
     flexDirection: "row",

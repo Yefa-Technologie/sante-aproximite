@@ -1,4 +1,4 @@
-// Design system — Santé Aproximité
+// Design system - Santé Aproximité
 export const C = {
   // Brand
   primary:      "#1A56DB",

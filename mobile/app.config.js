@@ -26,9 +26,14 @@ export default ({ config }) => {
   // EXPO_PUBLIC_LAN_IP permet de forcer une IP precise si la detection se trompe.
   const lanIp = !isProd ? (process.env.EXPO_PUBLIC_LAN_IP || detectLanIp()) : null;
 
-  const apiUrl = isProd
-    ? (process.env.EXPO_PUBLIC_API_URL_PROD || process.env.EXPO_PUBLIC_API_URL)
-    : (lanIp ? `http://${lanIp}:8081/api` : (process.env.EXPO_PUBLIC_API_URL_DEV || process.env.EXPO_PUBLIC_API_URL));
+  // EXPO_PUBLIC_API_URL_OVERRIDE force l'URL de l'API (ex: tunnel ngrok quand le telephone
+  // ne peut pas joindre le PC en Wi-Fi local).
+  const apiUrlOverride = String(process.env.EXPO_PUBLIC_API_URL_OVERRIDE || "").trim();
+  const apiUrl = apiUrlOverride
+    ? apiUrlOverride
+    : isProd
+      ? (process.env.EXPO_PUBLIC_API_URL_PROD || process.env.EXPO_PUBLIC_API_URL)
+      : (lanIp ? `http://${lanIp}:8081/api` : (process.env.EXPO_PUBLIC_API_URL_DEV || process.env.EXPO_PUBLIC_API_URL));
   const googleMapsApiKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || "";
 
   return {

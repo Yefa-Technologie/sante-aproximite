@@ -5,7 +5,7 @@ import { logEvent, getSummary, getUserActions } from "../controllers/analyticsCo
 
 const router = Router();
 
-// Attach user if token present — never blocks the request
+// Attach user if token present - never blocks the request
 function optionalAuth(req, res, next) {
   try {
     const authHeader = req.headers.authorization;
@@ -18,10 +18,10 @@ function optionalAuth(req, res, next) {
   next();
 }
 
-// Log an event — works with or without token
+// Log an event - works with or without token
 router.post("/event", optionalAuth, logEvent);
 
-// Stats — DEVELOPER, NATIONAL, REGULATOR only
+// Stats - DEVELOPER, NATIONAL, REGULATOR only
 router.get("/summary", requireAuth, requireRole(["DEVELOPER", "NATIONAL", "REGULATOR"]), getSummary);
 
 // Actions détaillées d'un utilisateur

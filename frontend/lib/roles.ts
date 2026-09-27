@@ -81,8 +81,15 @@ export type NavItem = {
   section: string;
 };
 
+// "Mon profil" est propose a tous les comptes connectes.
+const PROFILE_NAV_ITEM: NavItem = { key: "profile", label: "Mon profil", icon: "user", section: "MON COMPTE" };
+
 export function getNavItems(user: User | null | undefined): NavItem[] {
   if (!user) return [];
+  return [...getRoleNavItems(user), PROFILE_NAV_ITEM];
+}
+
+function getRoleNavItems(user: User): NavItem[] {
 
   if (isDeveloper(user)) {
     return [

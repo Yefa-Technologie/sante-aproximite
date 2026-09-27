@@ -104,8 +104,8 @@ export default function ReferralsPage() {
       />
 
       <div className="flex gap-3">
-        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-center">
-          <p className="text-lg font-black text-red-600">{pending.length}</p>
+        <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-center">
+          <p className="text-lg font-black text-blue-600">{pending.length}</p>
           <p className="text-[10px] text-slate-500">En attente</p>
         </div>
         <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-center">
@@ -129,7 +129,7 @@ export default function ReferralsPage() {
           <div
             key={item.id}
             className={`rounded-2xl border p-4 shadow-sm ${
-              item.status === "PENDING" ? "border-red-200 bg-white" : "border-slate-200 bg-white opacity-90"
+              item.status === "PENDING" ? "border-blue-200 bg-white" : "border-slate-200 bg-white opacity-90"
             }`}
           >
             <div className="flex items-center justify-between">

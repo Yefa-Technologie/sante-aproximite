@@ -105,7 +105,7 @@ export default function SettingsPage() {
             key={key}
             onClick={() => setTab(key as typeof tab)}
             className={`rounded-full px-4 py-1.5 text-xs font-semibold ${
-              tab === key ? "bg-red-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+              tab === key ? "bg-blue-600 text-white" : "bg-blue-50 text-blue-700 hover:bg-blue-100"
             }`}
           >
             {label}
@@ -241,7 +241,7 @@ function UsersTab({ token }: { token: string }) {
             key={item.key}
             onClick={() => setCategory(item.key)}
             className={`rounded-full px-3.5 py-1.5 text-xs font-semibold ${
-              category === item.key ? "bg-red-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+              category === item.key ? "bg-blue-600 text-white" : "bg-blue-50 text-blue-700 hover:bg-blue-100"
             }`}
           >
             {item.label} ({categoryCounts[item.key] ?? 0})
@@ -851,7 +851,7 @@ function AppTab({ token }: { token: string }) {
               key={a.key}
               onClick={() => loadModules(a.key)}
               className={`rounded-full px-3.5 py-1.5 text-xs font-semibold ${
-                appKey === a.key ? "bg-red-600 text-white" : "bg-slate-100 text-slate-600"
+                appKey === a.key ? "bg-blue-600 text-white" : "bg-blue-50 text-blue-700 hover:bg-blue-100"
               }`}
             >
               {a.label}

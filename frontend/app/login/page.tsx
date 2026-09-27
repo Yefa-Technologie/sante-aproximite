@@ -46,7 +46,7 @@ export default function LoginPage() {
 
   return (
     <main className="grid min-h-screen grid-cols-1 lg:grid-cols-2">
-      <section className="relative hidden flex-col justify-between overflow-hidden bg-gradient-to-br from-red-700 via-red-600 to-rose-800 p-12 text-white lg:flex">
+      <section className="relative hidden flex-col justify-between overflow-hidden bg-gradient-to-br from-blue-700 via-blue-600 to-blue-800 p-12 text-white lg:flex">
         <div className="absolute -right-24 -top-24 h-72 w-72 rounded-full bg-white/10 blur-3xl" />
         <div className="absolute -bottom-32 left-0 h-80 w-80 rounded-full bg-black/10 blur-3xl" />
         <div className="relative z-10">
@@ -55,7 +55,7 @@ export default function LoginPage() {
             <br />
             Aproximite
           </h1>
-          <p className="mt-4 max-w-sm text-red-50/90">
+          <p className="mt-4 max-w-sm text-blue-50/90">
             Plateforme de gestion et de pilotage des etablissements sanitaires de proximite.
           </p>
         </div>
@@ -67,7 +67,7 @@ export default function LoginPage() {
             </div>
           ))}
         </div>
-        <p className="relative z-10 text-xs text-red-100/70">
+        <p className="relative z-10 text-xs text-blue-100/70">
           v1.0.0 · &copy; {new Date().getFullYear()} Sante Aproximite
         </p>
       </section>
@@ -125,7 +125,7 @@ export default function LoginPage() {
 
           <p className="mt-6 text-center text-sm text-slate-500">
             Pas encore de compte ?{" "}
-            <Link href="/register" className="font-semibold text-red-600 hover:underline">
+            <Link href="/register" className="font-semibold text-blue-600 hover:underline">
               Creer un compte
             </Link>
           </p>

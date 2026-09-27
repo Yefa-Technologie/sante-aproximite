@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Menu, X, LogOut } from "lucide-react";
+import { Menu, X, LogOut, UserRound } from "lucide-react";
 import { useAuthStore } from "@/lib/auth-store";
 import { getNavItems } from "@/lib/roles";
 
@@ -41,9 +41,16 @@ export function Topbar() {
             <p className="text-xs font-bold text-slate-700">Ministere de la Sante</p>
             <p className="text-[11px] text-slate-400">Service digital des etablissements</p>
           </div>
-          <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600">
-            {user?.role || "VISITOR"}
-          </span>
+          <Link
+            href="/dashboard/profile"
+            className="flex items-center gap-2 rounded-full bg-blue-50 py-1 pl-1 pr-3 text-xs font-bold text-blue-700 hover:bg-blue-100"
+            title="Gerer mon profil"
+          >
+            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-blue-600 text-white">
+              <UserRound className="h-3.5 w-3.5" />
+            </span>
+            <span className="max-w-[10rem] truncate">{user?.fullName || "Mon profil"}</span>
+          </Link>
           <span className="hidden text-xs text-slate-400 md:block">{today}</span>
         </div>
       </div>
@@ -58,7 +65,7 @@ export function Topbar() {
                 href={href}
                 onClick={() => setOpen(false)}
                 className={`rounded-lg px-3 py-2 text-sm font-medium ${
-                  pathname === href ? "bg-red-50 text-red-700" : "text-slate-600 hover:bg-slate-100"
+                  pathname === href ? "bg-blue-50 text-blue-700" : "text-slate-600 hover:bg-slate-100"
                 }`}
               >
                 {item.label}

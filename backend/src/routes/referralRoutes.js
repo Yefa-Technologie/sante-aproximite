@@ -4,7 +4,8 @@ import {
   createReferral,
   listIncomingReferrals,
   listOutgoingReferrals,
-  rejectReferralReception
+  rejectReferralReception,
+  releaseReferralBed
 } from "../controllers/referralController.js";
 import { requireAuth, requireRole } from "../middlewares/authMiddleware.js";
 
@@ -17,5 +18,6 @@ router.get("/incoming", requireAuth, requireRole(ETABLISSEMENT_ROLES), listIncom
 router.get("/outgoing", requireAuth, requireRole(ORIGIN_ROLES), listOutgoingReferrals);
 router.post("/:id/confirm", requireAuth, requireRole(ETABLISSEMENT_ROLES), confirmReferralReception);
 router.post("/:id/reject", requireAuth, requireRole(ETABLISSEMENT_ROLES), rejectReferralReception);
+router.post("/:id/release-bed", requireAuth, requireRole(ETABLISSEMENT_ROLES), releaseReferralBed);
 
 export default router;

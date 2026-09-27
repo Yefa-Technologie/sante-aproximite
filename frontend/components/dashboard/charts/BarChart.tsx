@@ -2,7 +2,7 @@
 
 export function BarChart({
   data,
-  color = "#ef4444",
+  color = "#3b82f6",
   height = 160,
 }: {
   data: { label: string; count: number }[];

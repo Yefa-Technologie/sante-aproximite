@@ -124,7 +124,7 @@ export default function EvaluationsPage() {
               <div
                 className="h-24 w-24 shrink-0 rounded-full"
                 style={{
-                  background: `conic-gradient(#dc2626 ${coverage.percent}%, #f1f5f9 0)`,
+                  background: `conic-gradient(#1a56db ${coverage.percent}%, #f1f5f9 0)`,
                 }}
               />
               <div>
@@ -153,7 +153,7 @@ export default function EvaluationsPage() {
                 <div key={c._id} className="flex items-center gap-2 text-xs">
                   <span className="w-20 truncate text-slate-600">{c.name}</span>
                   <div className="h-2 flex-1 overflow-hidden rounded-full bg-slate-100">
-                    <div className="h-full bg-red-500" style={{ width: `${Math.max(0, Math.min(100, (c.ratingAverage || 0) * 20))}%` }} />
+                    <div className="h-full bg-blue-500" style={{ width: `${Math.max(0, Math.min(100, (c.ratingAverage || 0) * 20))}%` }} />
                   </div>
                   <span className="w-6 text-right font-bold text-slate-900">{c.ratingAverage ?? "-"}</span>
                 </div>

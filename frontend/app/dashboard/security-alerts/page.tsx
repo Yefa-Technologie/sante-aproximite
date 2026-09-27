@@ -112,7 +112,7 @@ export default function SecurityAlertsPage() {
             key={item.key}
             onClick={() => setCategory(item.key)}
             className={`rounded-full px-3.5 py-1.5 text-xs font-semibold ${
-              category === item.key ? "bg-red-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+              category === item.key ? "bg-blue-600 text-white" : "bg-blue-50 text-blue-700 hover:bg-blue-100"
             }`}
           >
             {item.label}

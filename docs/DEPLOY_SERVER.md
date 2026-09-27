@@ -53,21 +53,18 @@ Le process PM2 utilise:
 - fichier: `/var/www/sante-aproximite/backend/ecosystem.config.cjs`
 - nom PM2: `sante-aproxmite-api`
 
-## 4. Configuration du web
+## 4. Site web (Next.js)
 
-Dans `/var/www/sante-aproximite/web-vue/.env`:
+Le site web est dans `frontend/`. Il appelle par defaut l'API de production
+(`http://193.168.173.181:8081/api`, voir `frontend/lib/api-client.ts`) ; pour une autre API,
+definir `NEXT_PUBLIC_API_URL` avant le build.
 
-```env
-VITE_API_URL=http://193.168.173.181:8081/api
-```
+`scripts/deploy-server.sh` le compile et le lance avec PM2 :
+- nom PM2 : `sante-aproxmite-web`
+- port : `3000` (modifiable avec `WEB_PORT=xxxx bash scripts/deploy-server.sh`)
 
-Puis build:
-
-```bash
-cd /var/www/sante-aproximite/web-vue
-npm ci
-npm run build
-```
+Le script ajoute aussi `PUBLIC_BASE_URL=http://193.168.173.181:8081` dans `backend/.env`
+si absent : c'est l'adresse mise dans le QR code des centres (page publique `/avis/...`).
 
 ## 5. Application mobile
 

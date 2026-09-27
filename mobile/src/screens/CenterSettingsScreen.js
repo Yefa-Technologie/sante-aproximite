@@ -3,6 +3,7 @@ import { Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleShee
 import { apiFetch } from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import { C, R, S, shared } from "../theme";
+import { MyCenterSettings } from "../components/MyCenterSettings";
 
 const ACCENT = C.primary;
 
@@ -64,7 +65,22 @@ function toEditForm(center) {
   };
 }
 
+const ADMIN_SCOPE_ROLES = ["REGULATOR", "NATIONAL", "REGION", "DISTRICT"];
+
+function hasAdminScope(user) {
+  return [...(Array.isArray(user?.roles) ? user.roles : []), user?.role]
+    .map((value) => String(value || "").trim().toUpperCase().replace(/[\s-]+/g, "_"))
+    .some((role) => ADMIN_SCOPE_ROLES.includes(role));
+}
+
+// Un etablissement ne gere que son propre centre ; la liste filtrable par region/district
+// est reservee aux niveaux district, region et national.
 export function CenterSettingsScreen() {
+  const { user } = useAuth();
+  return hasAdminScope(user) ? <AdminCenterSettings /> : <MyCenterSettings />;
+}
+
+function AdminCenterSettings() {
   const { token, user } = useAuth();
   const scrollRef = useRef(null);
   const inputRefs = useRef({});
@@ -100,7 +116,7 @@ export function CenterSettingsScreen() {
   function scrollToField() {
     // no-op: measureLayout against the ScrollView ref is unsupported on the new
     // architecture (logs "ref.measureLayout must be called with a ref to a
-    // native component" instead of throwing a catchable error) — disabled.
+    // native component" instead of throwing a catchable error) - disabled.
   }
 
   async function loadRegions() {

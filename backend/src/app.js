@@ -14,10 +14,12 @@ import analyticsRoutes from "./routes/analyticsRoutes.js";
 import appSettingsRoutes from "./routes/appSettingsRoutes.js";
 import referralRoutes from "./routes/referralRoutes.js";
 import pushTokenRoutes from "./routes/pushTokenRoutes.js";
+import { renderFeedbackPage, submitPublicFeedback } from "./controllers/qrFeedbackController.js";
 import { errorHandler } from "./middlewares/errorHandler.js";
 
 export const app = express();
 
+app.set("trust proxy", true);
 app.use(cors());
 app.use(express.json({ limit: "20mb" }));
 
@@ -32,6 +34,9 @@ app.get("/api/version", (req, res) => {
 app.get("/api", (req, res) => {
   res.json({ message: "API Santé Aproximite active" });
 });
+// Page publique ouverte par le QR code d'un centre (observations et suggestions sans compte).
+app.get("/avis/:centerId", renderFeedbackPage);
+app.post("/api/public/centers/:centerId/feedback", submitPublicFeedback);
 app.use("/api/auth", authRoutes);
 app.use("/api/centers", healthCenterRoutes);
 app.use("/api/complaints", complaintRoutes);

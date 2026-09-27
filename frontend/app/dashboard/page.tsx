@@ -16,7 +16,7 @@ export default function DashboardIndexPage() {
 
   return (
     <div className="flex flex-1 items-center justify-center py-20">
-      <Spinner className="h-6 w-6 text-red-600" />
+      <Spinner className="h-6 w-6 text-blue-600" />
     </div>
   );
 }
