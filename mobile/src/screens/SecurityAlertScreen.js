@@ -268,6 +268,7 @@ export function SecurityAlertScreen() {
           <View style={styles.card}>
             <Text style={styles.sectionLabel}>LIEU DE L'INCIDENT</Text>
             <TextInput
+              placeholderTextColor="#94a3b8"
               style={shared.input}
               placeholder="Ex: Marche de Cocody, Rue des jardins..."
               value={locationName}
@@ -279,6 +280,7 @@ export function SecurityAlertScreen() {
           <View style={styles.card}>
             <Text style={styles.sectionLabel}>DESCRIPTION</Text>
             <TextInput
+              placeholderTextColor="#94a3b8"
               style={[shared.input, shared.textArea]}
               placeholder="Decrivez precisement ce qui se passe..."
               value={description}
@@ -309,6 +311,7 @@ export function SecurityAlertScreen() {
           <View style={styles.card}>
             <Text style={styles.sectionLabel}>TELEPHONE DE CONTACT</Text>
             <TextInput
+              placeholderTextColor="#94a3b8"
               style={shared.input}
               placeholder="Ex: 0700000000"
               value={phoneNumber}

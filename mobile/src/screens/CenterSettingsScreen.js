@@ -262,6 +262,7 @@ function AdminCenterSettings() {
         <Text style={styles.sectionLabel}>RECHERCHE & FILTRES</Text>
 
         <TextInput
+          placeholderTextColor="#94a3b8"
           ref={(ref) => registerInputRef("search", ref)}
           onFocus={() => scrollToField("search")}
           style={shared.input}
@@ -274,6 +275,7 @@ function AdminCenterSettings() {
           <View style={{ flex: 1 }}>
             <Text style={styles.fieldLabel}>Region</Text>
             <TextInput
+              placeholderTextColor="#94a3b8"
               ref={(ref) => registerInputRef("regionFilter", ref)}
               onFocus={() => scrollToField("regionFilter")}
               style={shared.input}
@@ -286,6 +288,7 @@ function AdminCenterSettings() {
           <View style={{ flex: 1 }}>
             <Text style={styles.fieldLabel}>District</Text>
             <TextInput
+              placeholderTextColor="#94a3b8"
               ref={(ref) => registerInputRef("districtFilterBottom", ref)}
               onFocus={() => scrollToField("districtFilterBottom")}
               style={shared.input}
@@ -324,6 +327,7 @@ function AdminCenterSettings() {
           <View style={{ flex: 1 }}>
             <Text style={styles.fieldLabel}>District</Text>
             <TextInput
+              placeholderTextColor="#94a3b8"
               ref={(ref) => registerInputRef("districtFilterTop", ref)}
               onFocus={() => scrollToField("districtFilterTop")}
               style={shared.input}
@@ -402,6 +406,7 @@ function AdminCenterSettings() {
                   { key: "servicesCsv",       placeholder: "Services (csv)" }
                 ].map((field) => (
                   <TextInput
+                    placeholderTextColor="#94a3b8"
                     key={field.key}
                     ref={(ref) => registerInputRef(`edit-${center._id}-${field.key}`, ref)}
                     onFocus={() => scrollToField(`edit-${center._id}-${field.key}`)}
@@ -414,14 +419,14 @@ function AdminCenterSettings() {
                 ))}
 
                 <Text style={styles.fieldLabel}>Niveau: {LEVEL_OPTIONS.join(", ")}</Text>
-                <TextInput ref={(ref) => registerInputRef(`edit-${center._id}-level`, ref)} onFocus={() => scrollToField(`edit-${center._id}-level`)} style={shared.input} placeholder="Niveau" value={editForm.level} onChangeText={(v) => setEditForm((p) => ({ ...p, level: v }))} />
+                <TextInput placeholderTextColor="#94a3b8" ref={(ref) => registerInputRef(`edit-${center._id}-level`, ref)} onFocus={() => scrollToField(`edit-${center._id}-level`)} style={shared.input} placeholder="Niveau" value={editForm.level} onChangeText={(v) => setEditForm((p) => ({ ...p, level: v }))} />
 
                 <Text style={styles.fieldLabel}>Type: {ESTABLISHMENT_TYPE_OPTIONS.join(", ")}</Text>
-                <TextInput ref={(ref) => registerInputRef(`edit-${center._id}-establishmentType`, ref)} onFocus={() => scrollToField(`edit-${center._id}-establishmentType`)} style={shared.input} placeholder="Type" value={editForm.establishmentType} onChangeText={(v) => setEditForm((p) => ({ ...p, establishmentType: v }))} />
+                <TextInput placeholderTextColor="#94a3b8" ref={(ref) => registerInputRef(`edit-${center._id}-establishmentType`, ref)} onFocus={() => scrollToField(`edit-${center._id}-establishmentType`)} style={shared.input} placeholder="Type" value={editForm.establishmentType} onChangeText={(v) => setEditForm((p) => ({ ...p, establishmentType: v }))} />
 
                 <View style={styles.row}>
-                  <TextInput ref={(ref) => registerInputRef(`edit-${center._id}-latitude`, ref)} onFocus={() => scrollToField(`edit-${center._id}-latitude`)} style={[shared.input, { flex: 1 }]} placeholder="Latitude"  keyboardType="numeric" value={editForm.latitude}  onChangeText={(v) => setEditForm((p) => ({ ...p, latitude: v }))} />
-                  <TextInput ref={(ref) => registerInputRef(`edit-${center._id}-longitude`, ref)} onFocus={() => scrollToField(`edit-${center._id}-longitude`)} style={[shared.input, { flex: 1 }]} placeholder="Longitude" keyboardType="numeric" value={editForm.longitude} onChangeText={(v) => setEditForm((p) => ({ ...p, longitude: v }))} />
+                  <TextInput placeholderTextColor="#94a3b8" ref={(ref) => registerInputRef(`edit-${center._id}-latitude`, ref)} onFocus={() => scrollToField(`edit-${center._id}-latitude`)} style={[shared.input, { flex: 1 }]} placeholder="Latitude"  keyboardType="numeric" value={editForm.latitude}  onChangeText={(v) => setEditForm((p) => ({ ...p, latitude: v }))} />
+                  <TextInput placeholderTextColor="#94a3b8" ref={(ref) => registerInputRef(`edit-${center._id}-longitude`, ref)} onFocus={() => scrollToField(`edit-${center._id}-longitude`)} style={[shared.input, { flex: 1 }]} placeholder="Longitude" keyboardType="numeric" value={editForm.longitude} onChangeText={(v) => setEditForm((p) => ({ ...p, longitude: v }))} />
                 </View>
 
                 <View style={styles.row}>

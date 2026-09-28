@@ -172,6 +172,7 @@ export function AuthScreen() {
 
             {profileType === "USER" && !hasAccount ? (
               <TextInput
+                placeholderTextColor="#94a3b8"
                 style={styles.input}
                 placeholder="Nom complet"
                 value={form.fullName}
@@ -181,6 +182,7 @@ export function AuthScreen() {
 
             {profileType === "USER" ? (
               <TextInput
+                placeholderTextColor="#94a3b8"
                 style={styles.input}
                 placeholder="Numero de telephone"
                 keyboardType="number-pad"
@@ -193,6 +195,7 @@ export function AuthScreen() {
               <>
                 {!hasAccount ? (
                   <TextInput
+                    placeholderTextColor="#94a3b8"
                     style={styles.input}
                     placeholder="Nom complet"
                     value={form.fullName}
@@ -200,6 +203,7 @@ export function AuthScreen() {
                   />
                 ) : null}
                 <TextInput
+                  placeholderTextColor="#94a3b8"
                   style={styles.input}
                   placeholder="Email"
                   autoCapitalize="none"
@@ -212,6 +216,7 @@ export function AuthScreen() {
                 />
                 <View style={styles.passwordField}>
                   <TextInput
+                    placeholderTextColor="#94a3b8"
                     style={styles.passwordInput}
                     placeholder="Mot de passe"
                     secureTextEntry={!showPassword}
@@ -228,6 +233,7 @@ export function AuthScreen() {
                 </View>
                 {!hasAccount ? (
                   <TextInput
+                    placeholderTextColor="#94a3b8"
                     style={styles.input}
                     placeholder="Code de l'etablissement"
                     autoCapitalize="characters"
@@ -240,6 +246,7 @@ export function AuthScreen() {
             {profileType === "EMERGENCY" ? (
               <>
                 <TextInput
+                  placeholderTextColor="#94a3b8"
                   style={styles.input}
                   placeholder="Email professionnel"
                   autoCapitalize="none"
@@ -252,6 +259,7 @@ export function AuthScreen() {
                 />
                 <View style={styles.passwordField}>
                   <TextInput
+                    placeholderTextColor="#94a3b8"
                     style={styles.passwordInput}
                     placeholder="Mot de passe"
                     secureTextEntry={!showPassword}
@@ -368,6 +376,7 @@ const styles = StyleSheet.create({
   label: { color: "#334155", fontWeight: "600" },
   input: {
     backgroundColor: "#fff",
+    color: "#0f172a",
     borderColor: "#d0e3ec",
     borderWidth: 1,
     borderRadius: 10,
@@ -386,6 +395,7 @@ const styles = StyleSheet.create({
   },
   passwordInput: {
     flex: 1,
+    color: "#0f172a",
     paddingVertical: 12
   },
   passwordToggle: {

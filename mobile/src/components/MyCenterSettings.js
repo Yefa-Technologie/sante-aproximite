@@ -398,8 +398,8 @@ export function MyCenterSettings() {
 
               <Text style={styles.fieldLabel}>Coordonnees GPS</Text>
               <View style={styles.row}>
-                <TextInput style={[shared.input, { flex: 1 }]} placeholder="Latitude" keyboardType="numeric" value={infoForm.latitude} onChangeText={(v) => setInfoForm((p) => ({ ...p, latitude: v }))} />
-                <TextInput style={[shared.input, { flex: 1 }]} placeholder="Longitude" keyboardType="numeric" value={infoForm.longitude} onChangeText={(v) => setInfoForm((p) => ({ ...p, longitude: v }))} />
+                <TextInput placeholderTextColor="#94a3b8" style={[shared.input, { flex: 1 }]} placeholder="Latitude" keyboardType="numeric" value={infoForm.latitude} onChangeText={(v) => setInfoForm((p) => ({ ...p, latitude: v }))} />
+                <TextInput placeholderTextColor="#94a3b8" style={[shared.input, { flex: 1 }]} placeholder="Longitude" keyboardType="numeric" value={infoForm.longitude} onChangeText={(v) => setInfoForm((p) => ({ ...p, longitude: v }))} />
               </View>
               <Text style={styles.hint}>Modifier le nom, l'adresse, le code, le niveau, le type ou la position renvoie le centre en validation.</Text>
 
@@ -450,6 +450,7 @@ export function MyCenterSettings() {
           )}
           <View style={styles.row}>
             <TextInput
+              placeholderTextColor="#94a3b8"
               style={[shared.input, { flex: 1 }]}
               placeholder="Ex: Radiologie, Echographie, Laboratoire"
               value={platformInput}
@@ -474,9 +475,9 @@ export function MyCenterSettings() {
 
           {showNewService ? (
             <View style={styles.newServiceBox}>
-              <TextInput style={shared.input} placeholder="Nom du service (ex: Maternite)" value={newService.name} onChangeText={(v) => setNewService((p) => ({ ...p, name: v }))} />
-              <TextInput style={shared.input} placeholder="Description (optionnel)" value={newService.description} onChangeText={(v) => setNewService((p) => ({ ...p, description: v }))} />
-              <TextInput style={shared.input} placeholder="Nombre de places disponibles" keyboardType="number-pad" value={newService.beds} onChangeText={(v) => setNewService((p) => ({ ...p, beds: v.replace(/\D/g, "") }))} />
+              <TextInput placeholderTextColor="#94a3b8" style={shared.input} placeholder="Nom du service (ex: Maternite)" value={newService.name} onChangeText={(v) => setNewService((p) => ({ ...p, name: v }))} />
+              <TextInput placeholderTextColor="#94a3b8" style={shared.input} placeholder="Description (optionnel)" value={newService.description} onChangeText={(v) => setNewService((p) => ({ ...p, description: v }))} />
+              <TextInput placeholderTextColor="#94a3b8" style={shared.input} placeholder="Nombre de places disponibles" keyboardType="number-pad" value={newService.beds} onChangeText={(v) => setNewService((p) => ({ ...p, beds: v.replace(/\D/g, "") }))} />
               <Pressable style={[styles.primaryBtn, busy === "add-service" && { opacity: 0.6 }]} onPress={addService} disabled={Boolean(busy)}>
                 <Text style={styles.primaryBtnText}>{busy === "add-service" ? "Ajout..." : "Ajouter le service"}</Text>
               </Pressable>
@@ -495,8 +496,8 @@ export function MyCenterSettings() {
               <View key={service.name} style={[styles.serviceCard, inactive && styles.serviceCardInactive]}>
                 {editing ? (
                   <View style={{ gap: 8 }}>
-                    <TextInput style={shared.input} value={serviceEdit.name} onChangeText={(v) => setServiceEdit((p) => ({ ...p, name: v }))} placeholder="Nom du service" />
-                    <TextInput style={shared.input} value={serviceEdit.description} onChangeText={(v) => setServiceEdit((p) => ({ ...p, description: v }))} placeholder="Description" />
+                    <TextInput placeholderTextColor="#94a3b8" style={shared.input} value={serviceEdit.name} onChangeText={(v) => setServiceEdit((p) => ({ ...p, name: v }))} placeholder="Nom du service" />
+                    <TextInput placeholderTextColor="#94a3b8" style={shared.input} value={serviceEdit.description} onChangeText={(v) => setServiceEdit((p) => ({ ...p, description: v }))} placeholder="Description" />
                     <View style={styles.row}>
                       <Pressable style={styles.outlineBtn} onPress={() => setEditingServiceName("")}>
                         <Text style={styles.outlineBtnText}>Annuler</Text>

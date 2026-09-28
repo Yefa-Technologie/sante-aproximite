@@ -676,6 +676,7 @@ export function ChefScreen({ initialSection } = {}) {
             Si votre etablissement existe deja dans la base (import officiel), entrez son code pour recuperer ses informations. Sinon, creez un nouveau centre.
           </Text>
           <TextInput
+            placeholderTextColor="#94a3b8"
             style={shared.input}
             value={claimCode}
             onChangeText={(v) => { setClaimCode(v); setClaimError(""); setClaimNotFound(false); }}
@@ -793,18 +794,21 @@ export function ChefScreen({ initialSection } = {}) {
               {editingServiceName === service.name ? (
                 <View style={{ gap: 8 }}>
                   <TextInput
+                    placeholderTextColor="#94a3b8"
                     style={shared.input}
                     value={serviceEditDraft.name}
                     onChangeText={(v) => setServiceEditDraft((p) => ({ ...p, name: v }))}
                     placeholder="Nom du service"
                   />
                   <TextInput
+                    placeholderTextColor="#94a3b8"
                     style={shared.input}
                     value={serviceEditDraft.description}
                     onChangeText={(v) => setServiceEditDraft((p) => ({ ...p, description: v }))}
                     placeholder="Description (optionnel)"
                   />
                   <TextInput
+                    placeholderTextColor="#94a3b8"
                     style={shared.input}
                     value={serviceEditDraft.bedsAvailable}
                     onChangeText={(v) => setServiceEditDraft((p) => ({ ...p, bedsAvailable: v }))}
@@ -872,15 +876,15 @@ export function ChefScreen({ initialSection } = {}) {
         <Text style={styles.sectionLabel}>INFORMATIONS GENERALES</Text>
         <View style={styles.fieldGroup}>
           <Text style={styles.fieldLabel}>Nom du centre <Text style={styles.requiredMark}>*</Text></Text>
-          <TextInput ref={(ref) => registerInputRef("name", ref)} onFocus={() => scrollToField("name")} style={shared.input} placeholder="Nom du centre" value={f.name} onChangeText={(v) => setF("name", v)} />
+          <TextInput placeholderTextColor="#94a3b8" ref={(ref) => registerInputRef("name", ref)} onFocus={() => scrollToField("name")} style={shared.input} placeholder="Nom du centre" value={f.name} onChangeText={(v) => setF("name", v)} />
         </View>
         <View style={styles.fieldGroup}>
           <Text style={styles.fieldLabel}>Adresse <Text style={styles.requiredMark}>*</Text></Text>
-          <TextInput ref={(ref) => registerInputRef("address", ref)} onFocus={() => scrollToField("address")} style={shared.input} placeholder="Adresse complete" value={f.address} onChangeText={(v) => setF("address", v)} />
+          <TextInput placeholderTextColor="#94a3b8" ref={(ref) => registerInputRef("address", ref)} onFocus={() => scrollToField("address")} style={shared.input} placeholder="Adresse complete" value={f.address} onChangeText={(v) => setF("address", v)} />
         </View>
         <View style={styles.fieldGroup}>
           <Text style={styles.fieldLabel}>Code etablissement (optionnel)</Text>
-          <TextInput ref={(ref) => registerInputRef("establishmentCode", ref)} onFocus={() => scrollToField("establishmentCode")} style={shared.input} placeholder="Ex: ABIDJAN-001" autoCapitalize="characters" value={f.establishmentCode} onChangeText={(v) => setF("establishmentCode", v)} />
+          <TextInput placeholderTextColor="#94a3b8" ref={(ref) => registerInputRef("establishmentCode", ref)} onFocus={() => scrollToField("establishmentCode")} style={shared.input} placeholder="Ex: ABIDJAN-001" autoCapitalize="characters" value={f.establishmentCode} onChangeText={(v) => setF("establishmentCode", v)} />
         </View>
       </View>
 
@@ -952,11 +956,11 @@ export function ChefScreen({ initialSection } = {}) {
         <Text style={styles.sectionLabel}>SERVICES & PLATEAU TECHNIQUE</Text>
         <View style={styles.fieldGroup}>
           <Text style={styles.fieldLabel}>Plateau technique <Text style={styles.requiredMark}>*</Text></Text>
-          <TextInput ref={(ref) => registerInputRef("technicalPlatform", ref)} onFocus={() => scrollToField("technicalPlatform")} style={[shared.input, shared.textArea]} multiline placeholder={"Ex: Bloc operatoire, imagerie (radio, echographie), laboratoire d'analyses, pharmacie, maternite..."} value={f.technicalPlatform} onChangeText={(v) => setF("technicalPlatform", v)} />
+          <TextInput placeholderTextColor="#94a3b8" ref={(ref) => registerInputRef("technicalPlatform", ref)} onFocus={() => scrollToField("technicalPlatform")} style={[shared.input, shared.textArea]} multiline placeholder={"Ex: Bloc operatoire, imagerie (radio, echographie), laboratoire d'analyses, pharmacie, maternite..."} value={f.technicalPlatform} onChangeText={(v) => setF("technicalPlatform", v)} />
         </View>
         <View style={styles.fieldGroup}>
           <Text style={styles.fieldLabel}>Services (separes par virgule)</Text>
-          <TextInput ref={(ref) => registerInputRef("servicesCsv", ref)} onFocus={() => scrollToField("servicesCsv")} style={shared.input} placeholder="Urgences, Radiologie, Pediatrie..." value={f.servicesCsv} onChangeText={(v) => setF("servicesCsv", v)} />
+          <TextInput placeholderTextColor="#94a3b8" ref={(ref) => registerInputRef("servicesCsv", ref)} onFocus={() => scrollToField("servicesCsv")} style={shared.input} placeholder="Urgences, Radiologie, Pediatrie..." value={f.servicesCsv} onChangeText={(v) => setF("servicesCsv", v)} />
         </View>
       </View>
 
@@ -966,11 +970,11 @@ export function ChefScreen({ initialSection } = {}) {
         <View style={styles.row}>
           <View style={{ flex: 1 }}>
             <Text style={styles.fieldLabel}>Latitude <Text style={styles.requiredMark}>*</Text></Text>
-            <TextInput ref={(ref) => registerInputRef("latitude", ref)} onFocus={() => scrollToField("latitude")} style={shared.input} keyboardType="numeric" placeholder="5.3600" value={f.latitude} onChangeText={(v) => setF("latitude", v)} />
+            <TextInput placeholderTextColor="#94a3b8" ref={(ref) => registerInputRef("latitude", ref)} onFocus={() => scrollToField("latitude")} style={shared.input} keyboardType="numeric" placeholder="5.3600" value={f.latitude} onChangeText={(v) => setF("latitude", v)} />
           </View>
           <View style={{ flex: 1 }}>
             <Text style={styles.fieldLabel}>Longitude <Text style={styles.requiredMark}>*</Text></Text>
-            <TextInput ref={(ref) => registerInputRef("longitude", ref)} onFocus={() => scrollToField("longitude")} style={shared.input} keyboardType="numeric" placeholder="-4.0083" value={f.longitude} onChangeText={(v) => setF("longitude", v)} />
+            <TextInput placeholderTextColor="#94a3b8" ref={(ref) => registerInputRef("longitude", ref)} onFocus={() => scrollToField("longitude")} style={shared.input} keyboardType="numeric" placeholder="-4.0083" value={f.longitude} onChangeText={(v) => setF("longitude", v)} />
           </View>
         </View>
         <Pressable style={styles.outlineBtn} onPress={getCurrentPosition}>
@@ -1037,6 +1041,7 @@ export function ChefScreen({ initialSection } = {}) {
             <Text style={styles.sectionLabel}>CONFIRMER UNE VISITE PATIENT</Text>
             <Text style={styles.visitConfirmHint}>Entrez le numero du patient pour confirmer sa visite manuellement.</Text>
             <TextInput
+              placeholderTextColor="#94a3b8"
               style={shared.input}
               value={visitPhone}
               onChangeText={(v) => { setVisitPhone(v); setVisitMsg({ text: "", ok: true }); }}
@@ -1094,6 +1099,7 @@ export function ChefScreen({ initialSection } = {}) {
                   referralRejectingId === String(item.id) ? (
                     <View style={{ marginTop: 8, gap: 8 }}>
                       <TextInput
+                        placeholderTextColor="#94a3b8"
                         style={shared.input}
                         placeholder="Motif du rejet"
                         value={referralRejectDrafts[item.id] || ""}
@@ -1240,6 +1246,7 @@ export function ChefScreen({ initialSection } = {}) {
               </View>
               <Text style={styles.complaintBody}>{item.message}</Text>
               <TextInput
+                placeholderTextColor="#94a3b8"
                 ref={(ref) => registerInputRef(`complaint-${item.id}`, ref)}
                 onFocus={() => scrollToField(`complaint-${item.id}`)}
                 style={[shared.input, shared.textArea]}

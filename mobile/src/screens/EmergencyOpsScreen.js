@@ -225,6 +225,7 @@ export function EmergencyOpsScreen() {
             {isCompleting ? "📋 Rapport d'intervention (obligatoire *)" : "📝 Note equipe (optionnel)"}
           </Text>
           <TextInput
+            placeholderTextColor="#94a3b8"
             style={[
               shared.input,
               shared.textArea,
@@ -435,7 +436,7 @@ const styles = StyleSheet.create({
 
   // Note / rapport
   noteLabel: { fontSize: 12, fontWeight: "700", color: C.textMed, marginBottom: 6 },
-  noteInput: { minHeight: 80 },
+  noteInput: { color: "#0F172A", minHeight: 80 },
   noteHint:  { fontSize: 11, color: C.textMuted, textAlign: "right", marginTop: 2 },
 
   // Report box (rapports tab)
