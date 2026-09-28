@@ -34,3 +34,7 @@ Thumbs.db
 
 # Local git backup folders
 **/.git_backup_mono/
+
+# APK generes par scripts/build-apk.ps1
+/apk/
+*.apk

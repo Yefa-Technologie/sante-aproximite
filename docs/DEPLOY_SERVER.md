@@ -60,11 +60,11 @@ Le site web est dans `frontend/`. Il appelle par defaut l'API de production
 definir `NEXT_PUBLIC_API_URL` avant le build.
 
 `scripts/deploy-server.sh` le compile et le lance avec PM2 :
-- nom PM2 : `sante-aproxmite-web`
+- nom PM2 : `sante-frontend` (Node 20 via nvm : Next.js 16 exige Node >= 20.9)
 - port : `3000` (modifiable avec `WEB_PORT=xxxx bash scripts/deploy-server.sh`)
 
-Le script ajoute aussi `PUBLIC_BASE_URL=http://193.168.173.181:8081` dans `backend/.env`
-si absent : c'est l'adresse mise dans le QR code des centres (page publique `/avis/...`).
+Le script ajoute aussi `PUBLIC_BASE_URL=https://sante-aproximite.yefa-technologie.org` dans `backend/.env`
+si absent : c'est l'adresse mise dans le QR code des centres (page publique `/avis/...`, que nginx doit router vers l'API : `location /avis/ { proxy_pass http://127.0.0.1:8081/avis/; }`).
 
 ## 5. Application mobile
 
@@ -84,7 +84,15 @@ npm ci
 npx expo export --platform android
 ```
 
-Pour une build Android via EAS:
+Pour generer l'APK en une commande (Windows) : compile sur EAS, attend la fin,
+telecharge l'APK dans `apk/` et, avec `-Install`, l'installe sur l'appareil USB :
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scriptsuild-apk.ps1            # profil production
+powershell -ExecutionPolicy Bypass -File scriptsuild-apk.ps1 -Install   # + installation adb
+```
+
+Pour une build Android via EAS (manuel):
 
 ```bash
 cd mobile
