@@ -1,7 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from "expo-location";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { FlatList, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { FlatList, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
 import { apiFetch } from "../api/client";
 import { DropdownField } from "../components/DropdownField";
 import {
@@ -20,6 +20,7 @@ import {
   buildOfferingOptions,
   centerHasPlatformItem,
   findMatchingService,
+  parsePlatformItems,
   toOfferingKey,
 } from "../utils/centerOfferings";
 
@@ -79,6 +80,10 @@ export function ReferralCenterScreen() {
   const [loading, setLoading] = useState(false);
   const [catalogNotice, setCatalogNotice] = useState(null);
   const [catalogLoading, setCatalogLoading] = useState(true);
+  // Sur petit ecran (smartphone), les filtres sont replies par defaut pour laisser la place aux centres.
+  const { height: windowHeight } = useWindowDimensions();
+  const isCompact = windowHeight < 900;
+  const [filtersOpen, setFiltersOpen] = useState(!isCompact);
   const [ownCenterIds, setOwnCenterIds] = useState([]);
   const [regions, setRegions] = useState([]);
   const [allDistricts, setAllDistricts] = useState([]);
@@ -406,6 +411,15 @@ export function ReferralCenterScreen() {
   const selectedServiceLabel = serviceOptions.find((item) => item.key === serviceFilter)?.label || "";
   const selectedPlatformLabel = platformOptions.find((item) => item.key === platformFilter)?.label || "";
 
+  const activeFilterLabels = [
+    regionFilter !== "ALL" ? (regionsByCode[regionFilter] || regionFilter) : "",
+    selectedServiceLabel,
+    selectedPlatformLabel,
+    cityFilter.trim(),
+    onlyAvailable ? "Places dispo" : "",
+    sortMode === "BEDS" ? "Plus de places" : "",
+  ].filter(Boolean);
+
   function toggleSelectCenter(center) {
     setSelectedCenterId((prev) => (prev === center._id ? "" : center._id));
   }
@@ -471,11 +485,13 @@ export function ReferralCenterScreen() {
 
   return (
     <View style={styles.container}>
-      <View style={styles.headerCard}>
+      <View style={[styles.headerCard, isCompact && styles.headerCardCompact]}>
         <Text style={styles.headerTitle}>Reference malade</Text>
-        <Text style={styles.headerText}>
-          Module reserve aux comptes {actorLabel}. Trouvez un centre de sante pour une reference, un depot patient ou une orientation rapide.
-        </Text>
+        {!isCompact ? (
+          <Text style={styles.headerText}>
+            Module reserve aux comptes {actorLabel}. Trouvez un centre de sante pour une reference, un depot patient ou une orientation rapide.
+          </Text>
+        ) : null}
       </View>
 
       <View style={styles.toolbar}>
@@ -498,6 +514,23 @@ export function ReferralCenterScreen() {
       </View>
 
       <View style={styles.filtersPanel}>
+        <Pressable
+          style={[styles.filtersToggle, filtersOpen && styles.filtersToggleOpen]}
+          onPress={() => setFiltersOpen((value) => !value)}
+          accessibilityRole="button"
+          accessibilityLabel={filtersOpen ? "Masquer les filtres" : "Afficher les filtres"}
+        >
+          <Text style={styles.filtersToggleTitle}>
+            Filtres{activeFilterLabels.length ? ` (${activeFilterLabels.length})` : ""}
+          </Text>
+          <Text style={styles.filtersToggleSummary} numberOfLines={1}>
+            {activeFilterLabels.length ? activeFilterLabels.join(" · ") : "Region, service, plateau, ville, tri"}
+          </Text>
+          <Text style={styles.filtersToggleChevron}>{filtersOpen ? "▲" : "▼"}</Text>
+        </Pressable>
+
+        {filtersOpen ? (
+        <>
         <Text style={styles.filterLabel}>Region</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipsRow} keyboardShouldPersistTaps="handled">
           {[{ code: "ALL", name: "Toutes les regions", count: centers.length }, ...regionOptions].map((region) => {
@@ -582,6 +615,8 @@ export function ReferralCenterScreen() {
             <Text style={[styles.sortChipText, onlyAvailable && styles.sortChipTextActive]}>{onlyAvailable ? "✓ " : ""}Places disponibles uniquement</Text>
           </Pressable>
         </ScrollView>
+        </>
+        ) : null}
 
         <Text style={styles.resultsSummary}>
           {filteredCenters.length} centre{filteredCenters.length > 1 ? "s" : ""}
@@ -661,10 +696,12 @@ export function ReferralCenterScreen() {
                 <Text style={styles.metaLabel}>Ville / district</Text>
                 <Text style={styles.metaValue}>{extractCenterCity(center, districtsByCode, regionsByCode) || "-"}</Text>
               </View>
-              <View style={styles.centerMeta}>
-                <Text style={styles.metaLabel}>Plateau technique</Text>
-                <Text style={styles.metaValue}>{center.technicalPlatform || "-"}</Text>
-              </View>
+              {parsePlatformItems(center.technicalPlatform).length ? (
+                <View style={styles.centerMeta}>
+                  <Text style={styles.metaLabel}>Plateau technique</Text>
+                  <Text style={styles.metaValue}>{parsePlatformItems(center.technicalPlatform).join(", ")}</Text>
+                </View>
+              ) : null}
               <View style={styles.centerMeta}>
                 <Text style={styles.metaLabel}>Services disponibles</Text>
                 {Array.isArray(center.services) && center.services.length > 0 ? (
@@ -855,6 +892,22 @@ const styles = StyleSheet.create({
     color: C.textDark,
   },
   chipsRow: { gap: 8 },
+  headerCardCompact: { paddingVertical: 10, gap: 0 },
+  filtersToggle: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: C.surface,
+    borderWidth: 1,
+    borderColor: C.border,
+    borderRadius: R.sm,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  filtersToggleOpen: { borderColor: C.primary },
+  filtersToggleTitle: { fontSize: 13, fontWeight: "800", color: C.primary },
+  filtersToggleSummary: { flex: 1, fontSize: 12, color: C.textMuted, fontWeight: "600" },
+  filtersToggleChevron: { fontSize: 12, color: C.primary, fontWeight: "800" },
   filterLabel: { fontSize: 11, fontWeight: "800", color: C.textMuted, letterSpacing: 0.6, textTransform: "uppercase", marginBottom: -2 },
   sortChip: {
     borderWidth: 1,
