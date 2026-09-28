@@ -24,7 +24,9 @@ param(
   [string]$OutDir = ""
 )
 
-$ErrorActionPreference = "Stop"
+# "Continue" : les outils (npx, eas) ecrivent des avis sur la sortie d'erreur (ex. "eas-cli x.y is now
+# available") que Windows PowerShell 5.1 transformerait en erreurs fatales. On se fie a $LASTEXITCODE.
+$ErrorActionPreference = "Continue"
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $MobileDir = Join-Path $RepoRoot "mobile"
 if (-not $OutDir) { $OutDir = Join-Path $RepoRoot "apk" }
@@ -45,12 +47,15 @@ try {
   }
 
   Step "Verification du compte Expo"
-  $account = (npx --yes eas-cli whoami 2>$null | Select-Object -First 1)
-  if ($LASTEXITCODE -ne 0 -or -not $account -or $account -match "Not logged in") {
+  # Sortie lue en entier avant filtrage : couper le flux (Select -First) fausserait $LASTEXITCODE.
+  $whoami = @(npx --yes eas-cli whoami 2>$null)
+  $whoamiExit = $LASTEXITCODE
+  $account = $whoami | Where-Object { $_ -is [string] -and $_.Trim() } | Select-Object -First 1
+  if ($whoamiExit -ne 0 -or -not $account -or $account -match "Not logged in") {
     Write-Host "Aucune session Expo : connexion requise."
     npx --yes eas-cli login
     if ($LASTEXITCODE -ne 0) { Fail "Connexion Expo impossible." }
-    $account = (npx --yes eas-cli whoami | Select-Object -First 1)
+    $account = @(npx --yes eas-cli whoami 2>$null) | Where-Object { $_ -is [string] -and $_.Trim() } | Select-Object -First 1
   }
   Write-Host "Compte Expo : $account"
 
@@ -89,7 +94,11 @@ try {
   $code = $build.appBuildVersion
   $stamp = Get-Date -Format "yyyyMMdd-HHmm"
   $apkPath = Join-Path $OutDir "sante-aproximite-$Profile-v$version-$code-$stamp.apk"
-  Invoke-WebRequest -Uri $apkUrl -OutFile $apkPath -UseBasicParsing
+  try {
+    Invoke-WebRequest -Uri $apkUrl -OutFile $apkPath -UseBasicParsing -ErrorAction Stop
+  } catch {
+    Fail "Telechargement impossible : $($_.Exception.Message). Lien : $apkUrl"
+  }
   $sizeMb = [math]::Round((Get-Item $apkPath).Length / 1MB, 1)
   Write-Host "APK : $apkPath ($sizeMb Mo)" -ForegroundColor Green
   Write-Host "Lien de telechargement : $apkUrl"
