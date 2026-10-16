@@ -27,8 +27,18 @@ export const useAuthStore = create<AuthState>((set) => ({
     if (typeof window === "undefined") return;
     const token = localStorage.getItem(TOKEN_KEY) || "";
     const raw = localStorage.getItem(USER_KEY);
-    const user = raw ? (JSON.parse(raw) as User) : null;
-    set({ token, user, ready: true });
+    try {
+      const user = raw ? (JSON.parse(raw) as User) : null;
+      if (!token || !user) {
+        localStorage.removeItem(TOKEN_KEY);
+        localStorage.removeItem(USER_KEY);
+        set({ token: "", user: null, ready: true });
+      } else set({ token, user, ready: true });
+    } catch {
+      localStorage.removeItem(TOKEN_KEY);
+      localStorage.removeItem(USER_KEY);
+      set({ token: "", user: null, ready: true });
+    }
   },
   login: (payload) => {
     const user: User = { ...payload.user, permissions: payload.user.permissions || [] };

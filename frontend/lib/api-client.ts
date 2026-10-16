@@ -18,12 +18,13 @@ export class ApiError extends Error {
   }
 }
 
-function clearSessionAndRedirect() {
+function clearSessionAndRedirect(rejectedToken: string) {
   if (typeof window === "undefined") return;
+  if (localStorage.getItem(TOKEN_KEY) !== rejectedToken) return;
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(USER_KEY);
   if (window.location.pathname !== "/login") {
-    window.location.href = "/login";
+    window.location.replace("/login");
   }
 }
 
@@ -53,6 +54,9 @@ export async function apiFetch<T = unknown>(path: string, options: ApiFetchOptio
   const data = isJsonResponse ? await response.json().catch(() => ({})) : {};
 
   if (!response.ok) {
+    // The backend normally supplies its own message, including on expired tokens.
+    // Session invalidation must not depend on whether that message is present.
+    if (response.status === 401 && token) clearSessionAndRedirect(token);
     let message: string | undefined = (data as { message?: string })?.message;
     if (!message) {
       if (response.status === 404) {
@@ -61,7 +65,6 @@ export async function apiFetch<T = unknown>(path: string, options: ApiFetchOptio
         message = "Acces refuse pour cette action.";
       } else if (response.status === 401) {
         message = "Session expiree. Reconnectez-vous.";
-        clearSessionAndRedirect();
       } else if (response.status >= 500) {
         message = "Erreur serveur. Reessayez dans quelques instants.";
       } else {
