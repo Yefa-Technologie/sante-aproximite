@@ -1,5 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { AppState } from "react-native";
+import { apiFetch, subscribeSession } from "../api/client";
 
 const TOKEN_KEY = "sante_aproxmite_token";
 const REFRESH_TOKEN_KEY = "sante_aproxmite_refresh_token";
@@ -12,6 +14,26 @@ export function AuthProvider({ children }) {
   const [refreshToken, setRefreshToken] = useState("");
   const [user, setUser] = useState(null);
   const [ready, setReady] = useState(false);
+
+  useEffect(() => subscribeSession((event) => {
+    if (event.expired) {
+      setToken(""); setRefreshToken(""); setUser(null);
+    } else if (event.payload) {
+      setToken(event.payload.token);
+      setRefreshToken(event.payload.refreshToken || "");
+      setUser(event.payload.user || null);
+    }
+  }), []);
+
+  useEffect(() => {
+    if (!ready || !token) return;
+    const validate = () => { apiFetch("/auth/profile", { token, queueOffline: false }).catch(() => {}); };
+    validate();
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") validate();
+    });
+    return () => subscription.remove();
+  }, [ready, token]);
 
   useEffect(() => {
     async function hydrate() {

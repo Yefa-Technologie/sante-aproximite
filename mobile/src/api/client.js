@@ -115,10 +115,24 @@ async function requestApi(path, { token, method = "GET", body, timeoutMs = 15000
 }
 
 let refreshingPromise = null;
+const sessionListeners = new Set();
+export function subscribeSession(listener) {
+  sessionListeners.add(listener);
+  return () => sessionListeners.delete(listener);
+}
+function notifySession(event) {
+  for (const listener of sessionListeners) listener(event);
+}
+async function expireSession(rejectedToken) {
+  if (await AsyncStorage.getItem(TOKEN_KEY) !== rejectedToken) return;
+  await AsyncStorage.multiRemove([TOKEN_KEY, REFRESH_TOKEN_KEY, USER_KEY]);
+  notifySession({ expired: true, token: rejectedToken });
+}
 
 async function refreshSessionIfPossible() {
   if (!refreshingPromise) {
     refreshingPromise = (async () => {
+      const originalToken = await AsyncStorage.getItem(TOKEN_KEY);
       const refreshToken = await AsyncStorage.getItem(REFRESH_TOKEN_KEY);
       if (!refreshToken) return null;
 
@@ -129,12 +143,13 @@ async function refreshSessionIfPossible() {
       });
 
       if (!payload?.token) return null;
+      if (await AsyncStorage.getItem(TOKEN_KEY) !== originalToken) return null;
       await AsyncStorage.multiSet([
         [TOKEN_KEY, payload.token],
         [REFRESH_TOKEN_KEY, payload.refreshToken || ""],
         [USER_KEY, JSON.stringify(payload.user || null)]
       ]);
-
+      notifySession({ payload });
       return payload.token;
     })().finally(() => {
       refreshingPromise = null;
@@ -260,19 +275,27 @@ export async function apiFetch(path, { token, method = "GET", body, timeoutMs = 
     if (
       error?.status === 401 &&
       effectiveToken &&
-      !isAuthPath(path)
+      (!isAuthPath(path) || path.startsWith("/auth/profile"))
     ) {
       try {
         const renewedToken = await refreshSessionIfPossible();
         if (renewedToken) {
-          const retried = await requestApi(path, { token: renewedToken, method: normalizedMethod, body, timeoutMs });
+          let retried;
+          try {
+            retried = await requestApi(path, { token: renewedToken, method: normalizedMethod, body, timeoutMs });
+          } catch (retryError) {
+            if (retryError?.status === 401) await expireSession(renewedToken);
+            throw retryError;
+          }
           if (normalizedMethod === "GET") {
             await saveCached(path, renewedToken, retried);
           }
           return retried;
         }
-      } catch {
-        // Continue to existing flow.
+        await expireSession(effectiveToken);
+      } catch (refreshError) {
+        if ([401, 403].includes(refreshError?.status)) await expireSession(effectiveToken);
+        throw normalizeError(refreshError);
       }
     }
 
