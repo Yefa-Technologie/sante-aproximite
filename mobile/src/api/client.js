@@ -57,7 +57,9 @@ function toCacheKey(path, token) {
 async function requestApi(path, { token, method = "GET", body, timeoutMs = 15000 } = {}) {
   let lastError = null;
 
-  for (const baseUrl of API_URL_CANDIDATES) {
+  // Assistant requests are interactive and must not be replayed against fallback servers.
+  const candidates = path.startsWith("/assistant/") ? API_URL_CANDIDATES.slice(0, 1) : API_URL_CANDIDATES;
+  for (const baseUrl of candidates) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -96,6 +98,7 @@ async function requestApi(path, { token, method = "GET", body, timeoutMs = 15000
         }
         const err = new Error(message || "Erreur API");
         err.status = response.status;
+        if (typeof data.code === "string") err.code = data.code;
         throw err;
       }
 
@@ -242,13 +245,13 @@ export async function syncPendingRequests() {
   return queue.length - remaining.length;
 }
 
-export async function apiFetch(path, { token, method = "GET", body } = {}) {
+export async function apiFetch(path, { token, method = "GET", body, timeoutMs = 15000, queueOffline = true } = {}) {
   const normalizedMethod = String(method || "GET").toUpperCase();
   const persistedToken = token ? await AsyncStorage.getItem(TOKEN_KEY) : "";
   const effectiveToken = persistedToken || token;
 
   try {
-    const data = await requestApi(path, { token: effectiveToken, method: normalizedMethod, body });
+    const data = await requestApi(path, { token: effectiveToken, method: normalizedMethod, body, timeoutMs });
     if (normalizedMethod === "GET") {
       await saveCached(path, effectiveToken, data);
     }
@@ -262,7 +265,7 @@ export async function apiFetch(path, { token, method = "GET", body } = {}) {
       try {
         const renewedToken = await refreshSessionIfPossible();
         if (renewedToken) {
-          const retried = await requestApi(path, { token: renewedToken, method: normalizedMethod, body });
+          const retried = await requestApi(path, { token: renewedToken, method: normalizedMethod, body, timeoutMs });
           if (normalizedMethod === "GET") {
             await saveCached(path, renewedToken, retried);
           }
@@ -278,7 +281,7 @@ export async function apiFetch(path, { token, method = "GET", body } = {}) {
       if (cached !== null) return cached;
     }
 
-    if (normalizedMethod !== "GET" && isNetworkFailure(error) && !isAuthPath(path)) {
+    if (queueOffline && normalizedMethod !== "GET" && isNetworkFailure(error) && !isAuthPath(path)) {
       await enqueueOfflineRequest(path, { token, method: normalizedMethod, body });
       return {
         queued: true,

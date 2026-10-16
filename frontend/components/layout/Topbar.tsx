@@ -6,6 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { Menu, X, LogOut, UserRound } from "lucide-react";
 import { useAuthStore } from "@/lib/auth-store";
 import { getNavItems } from "@/lib/roles";
+import { AssistantQuotaNotice } from "./AssistantQuotaNotice";
 
 export function Topbar() {
   const { user, logout } = useAuthStore();
@@ -55,6 +56,7 @@ export function Topbar() {
         </div>
       </div>
 
+      <AssistantQuotaNotice />
       {open ? (
         <div className="flex flex-col gap-1 border-t border-slate-100 px-4 py-3 lg:hidden">
           {navItems.map((item) => {

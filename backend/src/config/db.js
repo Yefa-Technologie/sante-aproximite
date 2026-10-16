@@ -1071,6 +1071,19 @@ async function runMigrations() {
 }
 
 export async function connectDb() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS assistant_quota_alerts (
+      id BIGSERIAL PRIMARY KEY,
+      incident_key TEXT UNIQUE NOT NULL,
+      model TEXT NOT NULL,
+      route TEXT NOT NULL,
+      first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      occurrence_count INTEGER NOT NULL DEFAULT 1,
+      last_notification_attempt_at TIMESTAMPTZ,
+      notified_at TIMESTAMPTZ
+    );
+  `);
   await pool.query("SELECT 1");
   await runMigrations();
   console.log("PostgreSQL connected");

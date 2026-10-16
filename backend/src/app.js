@@ -1,4 +1,5 @@
 import express from "express";
+import assistantRoutes from "./routes/assistantRoutes.js";
 import cors from "cors";
 import authRoutes from "./routes/authRoutes.js";
 import healthCenterRoutes from "./routes/healthCenterRoutes.js";
@@ -38,6 +39,7 @@ app.get("/api", (req, res) => {
 app.get("/avis/:centerId", renderFeedbackPage);
 app.post("/api/public/centers/:centerId/feedback", submitPublicFeedback);
 app.use("/api/auth", authRoutes);
+app.use("/api/assistant", assistantRoutes);
 app.use("/api/centers", healthCenterRoutes);
 app.use("/api/complaints", complaintRoutes);
 app.use("/api/suggestions", suggestionRoutes);

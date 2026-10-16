@@ -43,6 +43,7 @@
       "enabled": false
     },
     "plugins": [
+      ["expo-audio", { "microphonePermission": "Autorisez Santé Aproximité à utiliser le micro pour poser vos questions à l’assistant IA.", "enableBackgroundRecording": false }],
       "expo-location",
       "expo-sqlite",
       [

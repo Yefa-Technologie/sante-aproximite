@@ -2,6 +2,9 @@ import * as Location from "expo-location";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { FlatList, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import MapView, { Marker, Polyline } from "react-native-maps";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { AssistantScreen } from "./AssistantScreen";
+import { findCentersForIntent, formatCenterFacts } from "../utils/assistedCenterSearch.cjs";
 import { apiFetch, trackEvent } from "../api/client";
 import {
   ensureCatalogDownloaded,
@@ -87,6 +90,9 @@ export function NearbyScreen() {
   const [coords, setCoords] = useState(null);
   const [radiusKm, setRadiusKm] = useState("5");
   const [searchQuery, setSearchQuery] = useState("");
+  const [assistantOpen, setAssistantOpen] = useState(false);
+  const [aiIntent, setAiIntent] = useState(null);
+  const [aiQuestion, setAiQuestion] = useState("");
   const [centers, setCenters] = useState([]);
   const [allCenters, setAllCenters] = useState([]);
   const [browseMode, setBrowseMode] = useState("PROXIMITY");
@@ -385,7 +391,7 @@ export function NearbyScreen() {
     [centers]
   );
 
-  const selectedCenter = normalizedCenters.find((center) => center._id === selectedCenterId) || null;
+  const selectedCenter = (browseMode === "AI" ? allCenters : normalizedCenters).find((center) => center._id === selectedCenterId) || null;
 
   useEffect(() => {
     setFeedbackDrafts((prev) => {
@@ -603,8 +609,30 @@ export function NearbyScreen() {
     trackEvent("nearby", "browse_by_offering", { kind: offeringKind, key });
   }
 
+  const aiCenters = useMemo(() => {
+    if (!aiIntent) return [];
+    const result = findCentersForIntent(allCenters, aiIntent, { coords, districts: allDistricts, regions });
+    const q = searchQuery.trim().toLowerCase();
+    return result.centers.filter((center) => !q || [center.name, center.address, center.regionName, center.districtName, center.cityName, ...center.services.map((service) => service.name)].some((value) => String(value || "").toLowerCase().includes(q)));
+  }, [allCenters, aiIntent, coords, allDistricts, regions, searchQuery]);
+
+  async function searchWithAssistant(question) {
+    const data = await apiFetch("/assistant/center-search", { token, method: "POST", body: { question }, timeoutMs: 35000, queueOffline: false });
+    const intent = data.intent;
+    if (!intent || !["name", "service", "equipment", "locality"].every((field) => typeof intent[field] === "string") || typeof intent.nearby !== "boolean" || (intent.radiusKm !== null && (!Number.isFinite(intent.radiusKm) || intent.radiusKm < 1 || intent.radiusKm > 300))) throw new Error("INVALID_SEARCH_INTENT");
+    if (![intent.name, intent.service, intent.equipment, intent.locality].some(Boolean) && !intent.nearby && intent.radiusKm === null) return { reply: "Précisez le nom d’un centre, un service, un équipement ou une ville. Par exemple : une maternité près de moi, ou un centre avec un scanner à Bouaké." };
+    if (!allCenters.length) return { reply: "Le catalogue n’est pas encore disponible. Fermez l’assistant, laissez les centres se charger, puis réessayez." };
+    const result = findCentersForIntent(allCenters, intent, { coords, districts: allDistricts, regions });
+    setAiIntent(intent); setAiQuestion(question); setBrowseMode("AI"); setSearchQuery(""); setSelectedCenterId("");
+    const criteria = [intent.name, intent.service, intent.equipment, intent.locality].filter(Boolean).join(", ") || "votre recherche";
+    const count = result.centers.length;
+    const examples = result.centers.slice(0, 3).map((center) => `${center.name}.${center.partialNameMatch ? " Correspondance partielle du nom." : ""} ${formatCenterFacts(center)}`).join("\n\n");
+    return { reply: count ? `${count} centre(s) trouvé(s) pour ${criteria}, sur tout le catalogue sans limite de rayon, classés par pertinence. Les noms approchants sont inclus.\n\n${examples}\n\nTouchez Afficher les centres trouvés pour consulter tous les résultats et les itinéraires. Vérifiez les disponibilités auprès du centre.` : `Aucun centre du catalogue ne correspond à ${criteria}, même sans limite de rayon. Essayez un autre nom, une autre ville ou un autre service.`, hasSearchResults: true };
+  }
+
   const activeCenters =
-    browseMode === "PROXIMITY" ? filteredCenters
+    browseMode === "AI" ? aiCenters
+    : browseMode === "PROXIMITY" ? filteredCenters
     : browseMode === "CITY" ? selectedCityCenters
     : browseMode === "SERVICE" ? offeringCenters
     : regionFilteredCenters;
@@ -758,6 +786,10 @@ export function NearbyScreen() {
         </View>
       ) : null}
 
+      {!isMapFullscreen && ((browseMode === "CITY" && !selectedCity) || (browseMode === "SERVICE" && !selectedOfferingKey)) ? (
+        <Pressable accessibilityRole="button" onPress={() => setAssistantOpen(true)} style={{ alignSelf: "flex-end", paddingHorizontal: 16, paddingVertical: 8 }}><Text style={{ color: C.purple, fontWeight: "700" }}>Assistant IA · Trouver un centre</Text></Pressable>
+      ) : null}
+
       {!isMapFullscreen && browseMode === "CITY" && !selectedCity ? (
         <View style={styles.cityInputWrap}>
           <TextInput
@@ -897,11 +929,23 @@ export function NearbyScreen() {
             }
             placeholderTextColor={C.textLight}
           />
+          <Pressable accessibilityRole="button" accessibilityLabel="Rechercher un centre avec l’assistant IA" style={[styles.searchBtn, { backgroundColor: C.purple }]} onPress={() => setAssistantOpen(true)}>
+            <Text style={styles.searchBtnText}>Assistant IA</Text>
+          </Pressable>
           {browseMode === "PROXIMITY" ? (
             <Pressable style={styles.searchBtn} onPress={() => fetchNearby()}>
               <Text style={styles.searchBtnText}>{loading ? "..." : "OK"}</Text>
             </Pressable>
           ) : null}
+        </View>
+      ) : null}
+
+      {!isMapFullscreen && browseMode === "AI" ? (
+        <View style={{ paddingHorizontal: 14, paddingBottom: 10, gap: 6 }}>
+          <Text style={{ color: C.purple, fontWeight: "700" }}>Recherche assistée · {aiCenters.length} centre(s)</Text>
+          <Text style={{ color: C.textMuted }}>Tout le catalogue · sans limite de rayon · distances à vol d’oiseau</Text>
+          <Text style={{ color: C.textMuted }} numberOfLines={2}>{aiQuestion}</Text>
+          <Pressable accessibilityRole="button" onPress={() => { setAiIntent(null); setSearchQuery(""); setBrowseMode("PROXIMITY"); }}><Text style={{ color: C.primary, paddingVertical: 6 }}>Effacer la recherche assistée</Text></Pressable>
         </View>
       ) : null}
 
@@ -1133,6 +1177,18 @@ export function NearbyScreen() {
                 ) : null}
               </View>
 
+              {browseMode === "AI" ? (
+                <View style={styles.offeringMatchBox}>
+                  <View style={{ flex: 1, gap: 4 }}>
+                    <Text style={styles.centerAddress}>Distance : {center.distanceKm == null ? "indisponible — activez la localisation" : `${center.distanceKm} km à vol d’oiseau`}</Text>
+                    <Text style={styles.centerAddress}>Région : {center.regionName || center.regionCode || "non renseignée"}</Text>
+                    <Text style={styles.centerAddress}>District sanitaire : {center.districtName || center.districtCode || "non renseigné"}</Text>
+                    <Text style={styles.centerAddress}>Ville : {center.cityName || "non renseignée"}</Text>
+                    {center.partialNameMatch ? <Text style={styles.centerAddress}>Correspondance partielle du nom</Text> : null}
+                  </View>
+                </View>
+              ) : null}
+
               {browseMode === "SERVICE" ? (
                 <View style={styles.offeringMatchBox}>
                   <View style={{ flex: 1 }}>
@@ -1155,7 +1211,7 @@ export function NearbyScreen() {
                 </View>
               ) : null}
 
-              {browseMode === "SERVICE" ? (
+              {browseMode === "SERVICE" || (browseMode === "AI" && hasValidCoordinates(center) && center.location.coordinates.some((value) => value !== 0)) ? (
                 <Pressable style={styles.offeringNavBtn} onPress={() => startNavigation(center)}>
                   <Text style={styles.offeringNavBtnText}>🧭 Itineraire</Text>
                 </Pressable>
@@ -1352,6 +1408,13 @@ export function NearbyScreen() {
           }
         />
       ) : null}
+      <Modal visible={assistantOpen} animationType="slide" onRequestClose={() => setAssistantOpen(false)}>
+        {assistantOpen && <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
+          <Pressable accessibilityRole="button" onPress={() => setAssistantOpen(false)} style={{ padding: 14 }}><Text style={{ color: C.primary, fontWeight: "700" }}>‹ Retour aux centres</Text></Pressable>
+          <AssistantScreen title="Trouver un centre avec l’IA" initialQuestion={searchQuery} welcomeMessage="Quel centre cherchez-vous ? Indiquez un nom, un service, un équipement ou une ville, par écrit ou avec le micro. Je recherche uniquement dans le catalogue de l’application." onAsk={searchWithAssistant} onShowResults={() => setAssistantOpen(false)} />
+        </SafeAreaView>}
+      </Modal>
+
       <Modal
         visible={checkinModal.centerId != null}
         transparent

@@ -27,6 +27,7 @@ function compactServices(services) {
     ? services
         .map((service) => ({
           name: String(service?.name || "").trim(),
+          isActive: service?.isActive !== false,
           description: String(service?.description || "").trim().slice(0, 120) || null,
           bedsAvailable: compactBedCount(service?.bedsAvailable),
           bedsOccupied: compactBedCount(service?.bedsOccupied),
@@ -44,6 +45,7 @@ function sanitizeCenter(center) {
     _id: String(center?._id || center?.id || ""),
     name: String(center?.name || ""),
     address: String(center?.address || ""),
+    city: center?.cityName || center?.city || center?.ville || center?.commune || null,
     establishmentCode: center?.establishmentCode || null,
     level: center?.level || null,
     establishmentType: center?.establishmentType || null,

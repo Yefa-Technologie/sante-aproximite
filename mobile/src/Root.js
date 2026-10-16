@@ -1,4 +1,5 @@
-import { ActivityIndicator, AppState, Image, Linking, Modal, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, useWindowDimensions, View } from "react-native";
+import { ActivityIndicator, AppState, Image, Linking, Modal, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from "react-native";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 import { useEffect, useRef, useState } from "react";
 import { apiFetch, clearLocalCache, getPendingRequestsCount, syncPendingRequests, trackEvent } from "./api/client";
@@ -13,6 +14,7 @@ import { registerForPushNotifications } from "./notifications";
 const APP_VERSION = "1.0.0";
 
 const MODULE_ICONS = {
+  assistant: { uri: "https://img.icons8.com/color/96/chat.png" },
   centers:   { uri: "https://img.icons8.com/color/96/hospital-3.png" },
   referral:  { uri: "https://img.icons8.com/color/96/ambulance.png" },
   complaints:{ uri: "https://img.icons8.com/color/96/complaint.png" },
@@ -59,6 +61,7 @@ const ROLE_LABELS = {
 };
 
 const MODULE_DESCRIPTIONS = {
+  assistant: "Dialoguer et être guidé dans l'application",
   profile:             "Vos informations et votre mot de passe",
   nearby:              "Carte et liste des centres proches",
   referral:            "Orienter un patient vers un centre",
@@ -75,6 +78,7 @@ const MODULE_DESCRIPTIONS = {
 };
 
 export function Root() {
+  const insets = useSafeAreaInsets();
   const { user, token, ready, logout } = useAuth();
   const { width: windowWidth } = useWindowDimensions();
   const [currentTab, setCurrentTab] = useState("home");
@@ -328,6 +332,10 @@ export function Root() {
   if (!user) return <AuthScreen />;
 
   function renderCurrentScreen() {
+    if (currentTab === "assistant") {
+      const { AssistantScreen } = require("./screens/AssistantScreen");
+      return <AssistantScreen key={`${user.id}-${refreshKey}`} actions={tabs.filter((tab) => ["nearby", "complaints", "emergency"].includes(tab.key))} onNavigate={setCurrentTab} />;
+    }
     if (currentTab === "profile") {
       const { ProfileScreen } = require("./screens/ProfileScreen");
       return <ProfileScreen key={refreshKey} />;
@@ -456,6 +464,7 @@ export function Root() {
   }
 
   const tabs = [
+    { key: "assistant", label: "Assistant IA", icon: MODULE_ICONS.assistant },
     { key: "profile", label: "Mon profil", icon: MODULE_ICONS.settings },
     ...(canSeeNearby           ? [{ key: "nearby",              label: "Centres de sante",       icon: MODULE_ICONS.centers   }] : []),
     ...(canUseReferralModule   ? [{ key: "referral",            label: "Reference malade",       icon: MODULE_ICONS.referral  }] : []),
@@ -527,7 +536,7 @@ export function Root() {
 
       {/* Full-screen menu overlay */}
       <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={() => setMenuOpen(false)}>
-        <Pressable style={styles.overlay} onPress={() => setMenuOpen(false)}>
+        <Pressable style={[styles.overlay, { paddingTop: insets.top, paddingBottom: insets.bottom }]} onPress={() => setMenuOpen(false)}>
           <Pressable style={styles.drawer} onPress={() => {}}>
             {/* Fixed header - never scrolls */}
             <View style={styles.drawerHeader}>
@@ -795,7 +804,7 @@ export function Root() {
 
       {/* A propos modal */}
       <Modal visible={showAbout} transparent animationType="slide" onRequestClose={() => setShowAbout(false)}>
-        <View style={styles.modalOverlay}>
+        <View style={[styles.modalOverlay, { paddingTop: insets.top, paddingBottom: insets.bottom, paddingLeft: insets.left, paddingRight: insets.right }]}>
           <View style={styles.modalSheet}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>A propos</Text>
@@ -926,7 +935,7 @@ export function Root() {
 
       {/* Aide modal */}
       <Modal visible={showHelp} transparent animationType="slide" onRequestClose={() => setShowHelp(false)}>
-        <View style={styles.modalOverlay}>
+        <View style={[styles.modalOverlay, { paddingTop: insets.top, paddingBottom: insets.bottom, paddingLeft: insets.left, paddingRight: insets.right }]}>
           <View style={styles.modalSheet}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Aide & FAQ</Text>

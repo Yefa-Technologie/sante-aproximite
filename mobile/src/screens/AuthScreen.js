@@ -4,7 +4,6 @@ import {
   KeyboardAvoidingView,
   Platform,
   Pressable,
-  SafeAreaView,
   ScrollView,
   Switch,
   StyleSheet,
@@ -12,6 +11,7 @@ import {
   TextInput,
   View
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { apiFetch } from "../api/client";
 import { useAuth } from "../context/AuthContext";
 

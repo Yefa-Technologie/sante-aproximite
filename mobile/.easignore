@@ -5,3 +5,6 @@ android/.gradle-home
 node_modules
 .expo
 *.log
+.env
+.env.*
+!.env.example
