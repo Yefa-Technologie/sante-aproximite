@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { apiFetch, ApiError } from "@/lib/api-client";
 import { useAuthStore } from "@/lib/auth-store";
@@ -122,13 +121,6 @@ export default function LoginPage() {
               {loading ? "Connexion en cours..." : "Se connecter →"}
             </Button>
           </form>
-
-          <p className="mt-6 text-center text-sm text-slate-500">
-            Pas encore de compte ?{" "}
-            <Link href="/register" className="font-semibold text-blue-600 hover:underline">
-              Creer un compte
-            </Link>
-          </p>
 
           <div className="mt-6 flex items-center justify-center gap-2 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500">
             <Lock className="h-3.5 w-3.5" /> Plateforme securisee - acces restreint aux personnels autorises
