@@ -16,6 +16,7 @@ async function getTransporter() {
         host: env.smtpHost,
         port: Number(env.smtpPort || 587),
         secure: String(env.smtpSecure || "false").toLowerCase() === "true",
+        requireTLS: env.smtpRequireTLS,
         auth: {
           user: env.smtpUser,
           pass: env.smtpPass,

@@ -1,4 +1,5 @@
 import dotenv from "dotenv";
+import { mailConfig } from "./mailConfig.js";
 
 dotenv.config();
 
@@ -15,11 +16,5 @@ export const env = {
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || "7d",
   jwtRefreshSecret: process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET || "dev_secret",
   jwtRefreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN || "30d",
-  smtpHost: process.env.SMTP_HOST || "",
-  smtpPort: process.env.SMTP_PORT || "587",
-  smtpSecure: process.env.SMTP_SECURE || "false",
-  smtpUser: process.env.SMTP_USER || "",
-  smtpPass: process.env.SMTP_PASS || "",
-  mailFrom: process.env.MAIL_FROM || "",
-  contactRecipient: process.env.CONTACT_RECIPIENT || "yefa.technologie@gmail.com",
+  ...mailConfig(process.env),
 };
