@@ -135,6 +135,9 @@ function UsersTab({ token }: { token: string }) {
   const [success, setSuccess] = useState("");
   const [form, setForm] = useState({ fullName: "", email: "", password: "", role: "USER", establishmentCode: "", baseId: "" });
   const [editingId, setEditingId] = useState("");
+  const [otherServiceBases,setOtherServiceBases] = useState<Record<string,string>>({});
+  const editingAccount=users.find(u=>u.id===editingId);
+  const additionalServices=editingAccount?.role===form.role ? getUserRoles(editingAccount).filter(service=>SERVICE_ROLES.includes(service) && service!==form.role) : [];
 
   async function load() {
     setError("");
@@ -164,6 +167,7 @@ function UsersTab({ token }: { token: string }) {
 
   function resetForm() {
     setEditingId("");
+    setOtherServiceBases({});
     setForm({ fullName: "", email: "", password: "", role: "USER", establishmentCode: "", baseId: "" });
   }
 
@@ -176,7 +180,7 @@ function UsersTab({ token }: { token: string }) {
       const keepRoles=editingUser?.role===form.role;
       const payload: Record<string, unknown> = {
         fullName: form.fullName, email: form.email, role: form.role, roles: keepRoles ? editingUser.roles || [form.role] : [form.role],
-        serviceBases: {...(keepRoles ? editingUser?.serviceBases : {}), ...(SERVICE_ROLES.includes(form.role) ? {[form.role]:form.baseId} : {})},
+        serviceBases: {...(keepRoles ? otherServiceBases : {}), ...(SERVICE_ROLES.includes(form.role) ? {[form.role]:form.baseId} : {})},
         establishmentCode: form.establishmentCode || null,
       };
       if (form.password.trim()) payload.password = form.password;
@@ -196,6 +200,7 @@ function UsersTab({ token }: { token: string }) {
 
   function edit(u: User) {
     setEditingId(u.id);
+    setOtherServiceBases(u.serviceBases || {});
     setForm({ fullName: u.fullName, email: u.email, password: "", role: u.role, establishmentCode: u.establishmentCode || "", baseId: u.serviceBases?.[u.role] || "" });
   }
 
@@ -243,6 +248,12 @@ function UsersTab({ token }: { token: string }) {
           </Select>
           {!bases.some(b=>b.isActive && b.serviceType===form.role)?<span className="text-amber-700">Créez d’abord une base de ce service dans l’onglet Bases de secours et sécurité.</span>:null}
         </label>:null}
+        {additionalServices.map(service=><label key={service} className="col-span-full flex flex-col gap-1 text-sm">Base {service.replaceAll("_"," ")} obligatoire (rôle supplémentaire)
+          <Select required value={otherServiceBases[service] || ""} onChange={e=>setOtherServiceBases(p=>({...p,[service]:e.target.value}))}>
+            <option value="">Choisir une base du même service</option>
+            {bases.filter(b=>b.isActive && b.serviceType===service).map(b=><option key={b.id} value={b.id}>{b.name} · {b.city}</option>)}
+          </Select>
+        </label>)}
         <div className="col-span-full flex gap-2">
           {editingId ? <Button type="button" variant="outline" onClick={resetForm}>Annuler</Button> : null}
           <Button type="submit">{editingId ? "Mettre a jour" : "Creer l'utilisateur"}</Button>
