@@ -83,6 +83,12 @@ export function Root() {
   const { user, token, ready, logout } = useAuth();
   const { width: windowWidth } = useWindowDimensions();
   const [currentTab, setCurrentTab] = useState("home");
+  const [incidentCoordinator,setIncidentCoordinator]=useState(false);
+  useEffect(()=>{
+    let active=true;setIncidentCoordinator(false);
+    const load=()=>{if(token)apiFetch("/incidents/access/mine",{token,cache:false,queueOffline:false}).then(a=>{if(active)setIncidentCoordinator(a.coordinateAll||a.coordinateBaseIds?.length>0);}).catch(()=>{if(active)setIncidentCoordinator(false);});};
+    load();const timer=setInterval(load,30000);return()=>{active=false;clearInterval(timer);};
+  },[token,user?.id]);
   const [menuOpen, setMenuOpen] = useState(false);
   const [projectModalOpen, setProjectModalOpen] = useState(false);
   const [donationModalOpen, setDonationModalOpen] = useState(false);
@@ -147,8 +153,8 @@ export function Root() {
   const canSendSecurityAlert  = isModuleEnabled("security_alert");
   const canUseReferralModule = isModuleEnabled("referral");
   const canSeeChefSpace       = isModuleEnabled("chef");
-  const canSeeEmergencyAlerts = hasAnyRole(["SAMU","SAPEUR_POMPIER"]) && isModuleEnabled("alerts");
-  const canSeeSecurityOps     = hasAnyRole(["POLICE","GENDARMERIE","PROTECTION_CIVILE"]) && isModuleEnabled("security_ops");
+  const canSeeEmergencyAlerts = incidentCoordinator || hasAnyRole(["SAMU","SAPEUR_POMPIER"]) && isModuleEnabled("alerts");
+  const canSeeSecurityOps     = incidentCoordinator || hasAnyRole(["POLICE","GENDARMERIE","PROTECTION_CIVILE"]) && isModuleEnabled("security_ops");
   const canSeeCenterSettings  = isModuleEnabled("settings");
   const canSeeDonation        = isModuleEnabled("donation");
   const canSeeContactDeveloper = isModuleEnabled("contact_developer");
@@ -535,7 +541,7 @@ export function Root() {
         </View>
       </View>
 
-      {hasAnyRole(["SAMU", "SAPEUR_POMPIER", "POLICE", "GENDARMERIE", "PROTECTION_CIVILE"]) ? <LocalEmergencyAlerts key={user.id} token={token} onNavigate={(kind) => setCurrentTab(kind === "security" ? "security_ops" : "alerts")} /> : null}
+      {(incidentCoordinator || hasAnyRole(["SAMU", "SAPEUR_POMPIER", "POLICE", "GENDARMERIE", "PROTECTION_CIVILE"])) ? <LocalEmergencyAlerts key={user.id} token={token} onNavigate={(kind) => setCurrentTab(kind === "security" ? "security_ops" : "alerts")} /> : null}
       {/* Full-screen menu overlay */}
       <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={() => setMenuOpen(false)}>
         <Pressable style={[styles.overlay, { paddingTop: insets.top, paddingBottom: insets.bottom }]} onPress={() => setMenuOpen(false)}>

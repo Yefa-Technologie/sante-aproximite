@@ -1,6 +1,8 @@
+import { IncidentGpsPanel } from "../components/IncidentGpsPanel";
+import { captureIncidentPosition,newRequestId } from "../utils/incidentGps.cjs";
 import * as Location from "expo-location";
 import * as ImagePicker from "expo-image-picker";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { apiFetch, trackEvent } from "../api/client";
 import { useAuth } from "../context/AuthContext";
@@ -46,6 +48,12 @@ const ALERT_TYPES_BY_SERVICE = {
 };
 
 const STATUS_CFG = {
+  PENDING_ASSIGNMENT:{label:"À affecter",bg:C.amberLight,color:C.amber},
+  EN_ROUTE:{label:"Équipe envoyée",bg:C.amberLight,color:C.amber},
+  ON_SITE:{label:"Sur place",bg:C.primaryLight,color:C.primary},
+  COMPLETED:{label:"Intervention terminée",bg:C.greenLight,color:C.green},
+  UNCONFIRMED:{label:"Non confirmé",bg:C.border,color:C.textMuted},
+  DUPLICATE:{label:"Doublon",bg:C.border,color:C.textMuted},
   NEW:          { label: "NOUVELLE",        bg: C.purpleLight, color: ACCENT },
   ACKNOWLEDGED: { label: "PRISE EN CHARGE", bg: C.amberLight,  color: C.amber },
   RESOLVED:     { label: "RESOLUE",         bg: C.greenLight,  color: C.green },
@@ -70,6 +78,9 @@ export function SecurityAlertScreen() {
   const [phoneNumber, setPhoneNumber]         = useState("");
   const [photos, setPhotos]                   = useState([]);
   const [coords, setCoords]                   = useState(null);
+  const [presence,setPresence]=useState(false),[victims,setVictims]=useState("");
+  const requestId=useRef(newRequestId()),submissionLock=useRef(false);
+  useEffect(()=>{requestId.current=newRequestId();},[targetService,alertType,locationName,description,phoneNumber,photos,victims]);
   const [locationLoading, setLocationLoading] = useState(false);
   const [loading, setLoading]                 = useState(false);
   const [error, setError]                     = useState("");
@@ -108,19 +119,13 @@ export function SecurityAlertScreen() {
   }, [targetService]);
 
   async function captureLocation() {
-    setLocationLoading(true); setError("");
+    setLocationLoading(true);setError("");setCoords(null);
     try {
-      const perm = await Location.requestForegroundPermissionsAsync();
-      if (perm.status !== "granted") throw new Error("Permission de localisation refusee.");
-      const current = await Location.getCurrentPositionAsync({});
-      setCoords({ lat: current.coords.latitude, lon: current.coords.longitude });
-      void Location.reverseGeocodeAsync(current.coords).then(places => setCoords(previous => previous?.lat === current.coords.latitude && previous?.lon === current.coords.longitude ? {...previous, city: places[0]?.city || ""} : previous)).catch(() => {});
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLocationLoading(false);
-    }
+      const policy=await apiFetch("/incidents/policy",{token,cache:false,queueOffline:false});
+      const position=await captureIncidentPosition(Location,policy);setCoords(position);return position;
+    }catch(err){setCoords(null);setError(err.message);throw err;}finally{setLocationLoading(false);}
   }
+  useEffect(()=>{void captureLocation().catch(()=>{});},[]);
 
   async function takePhoto() {
     setError("");
@@ -151,10 +156,15 @@ export function SecurityAlertScreen() {
     if (phoneNumber.replace(/\D/g, "").length !== 10) { setError("Numero invalide (10 chiffres)."); return; }
     if (!coords)                                      { setError("Capturez votre position GPS."); return; }
 
+    if(!presence){setError("Confirmez votre présence sur les lieux.");return;}
+    if(submissionLock.current)return;submissionLock.current=true;
+    const submissionId=requestId.current;
     setLoading(true);
     try {
+      const fresh=await captureLocation();
+      if(victims!==""&&(!/^\d+$/.test(victims)||Number(victims)>10000))throw new Error("Nombre de victimes invalide.");
       const result = await apiFetch("/security-alerts", {
-        token, method: "POST",
+        token, method: "POST", queueOffline:false,
         body: {
           targetService,
           alertType,
@@ -162,24 +172,23 @@ export function SecurityAlertScreen() {
           description:   description.trim(),
           phoneNumber:   phoneNumber.replace(/\D/g, ""),
           photos,
-          latitude:      coords.lat,
-          longitude:     coords.lon,
-          city: coords.city || ""
+          ...fresh, presenceConfirmed:presence, victimCount:victims===""?null:Number(victims), clientRequestId:submissionId
         }
       });
-      setSuccess(result?.queued ? result.message || "Enregistree hors ligne." : "Alerte envoyee avec succes.");
+      setSuccess(`Alerte envoyée. ${result?.alert?.userStatusMessage || ""} ${result?.warning || ""}`);
       trackEvent("security_alert", "send_security", {
         targetService,
         alertType,
         queued: !!result?.queued,
       });
       setTargetService(""); setAlertType(""); setLocationName(""); setDescription(""); setPhoneNumber(""); setCoords(null); setPhotos([]);
+      setPresence(false);setVictims("");requestId.current=newRequestId();
       await loadMyAlerts();
       setTab("history");
     } catch (err) {
       setError(err.message);
     } finally {
-      setLoading(false);
+      submissionLock.current=false;setLoading(false);
     }
   }
 
@@ -201,7 +210,7 @@ export function SecurityAlertScreen() {
         </View>
         <View style={{ flex: 1 }}>
           <Text style={styles.headerTitle}>Urgence securitaire</Text>
-          <Text style={styles.headerSub}>Signalez un incident securitaire en temps reel</Text>
+          <Text style={styles.headerSub}>Mettez-vous en sécurité avant de signaler. Ne vous exposez pas pour prendre une photo.</Text>
         </View>
       </View>
 
@@ -286,6 +295,7 @@ export function SecurityAlertScreen() {
               style={[shared.input, shared.textArea]}
               placeholder="Decrivez precisement ce qui se passe..."
               value={description}
+              maxLength={1000}
               onChangeText={setDescription}
               multiline
             />
@@ -323,35 +333,15 @@ export function SecurityAlertScreen() {
             />
           </View>
 
-          {/* GPS */}
-          <View style={styles.card}>
-            <Text style={styles.sectionLabel}>POSITION GPS</Text>
-            {coords ? (
-              <View style={styles.coordsBox}>
-                <Text style={styles.coordsRow}>📍 Lat: {coords.lat.toFixed(5)}</Text>
-                <Text style={styles.coordsRow}>📍 Lon: {coords.lon.toFixed(5)}</Text>
-              </View>
-            ) : (
-              <Text style={shared.hint}>Position non capturee</Text>
-            )}
-            <Pressable
-              style={[styles.gpsBtn, locationLoading && { opacity: 0.6 }]}
-              onPress={captureLocation}
-              disabled={locationLoading}
-            >
-              <Text style={styles.gpsBtnText}>
-                {locationLoading ? "Localisation..." : coords ? "Actualiser la position" : "📍 Capturer ma position"}
-              </Text>
-            </Pressable>
-          </View>
+          <IncidentGpsPanel position={coords} busy={locationLoading} onRefresh={()=>captureLocation().catch(()=>{})} presence={presence} onPresence={setPresence} victims={victims} onVictims={setVictims}/>
 
           {error   ? <Text style={shared.error}>{error}</Text>   : null}
           {success ? <Text style={shared.success}>{success}</Text> : null}
 
           <Pressable
-            style={[styles.submitBtn, (!canSubmit || loading) && { opacity: 0.45 }]}
+            style={[styles.submitBtn, (!canSubmit || !presence || loading) && { opacity: 0.45 }]}
             onPress={submitAlert}
-            disabled={!canSubmit || loading}
+            disabled={!canSubmit || !presence || loading}
           >
             <Text style={styles.submitBtnText}>{loading ? "Envoi en cours..." : "Envoyer l'alerte"}</Text>
           </Pressable>

@@ -1,7 +1,9 @@
+import { IncidentGpsPanel } from "../components/IncidentGpsPanel";
+import { captureIncidentPosition,newRequestId } from "../utils/incidentGps.cjs";
 import * as Location from "expo-location";
 import * as ImagePicker from "expo-image-picker";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Linking, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { apiFetch, trackEvent } from "../api/client";
 import { useAuth } from "../context/AuthContext";
@@ -34,13 +36,11 @@ const EMERGENCY_TYPES_BY_SERVICE = {
   ],
 };
 const EMERGENCY_PHONE_KEY = "sante_aproxmite_emergency_phone";
-const IDEAL_GPS_RADIUS_METERS = 10;
-const TARGET_GPS_RADIUS_METERS = 20;
-const MAX_GPS_RADIUS_METERS = 300;
 const REPORTS_PREVIEW_LIMIT = 3;
 
 const EMERGENCY_STATUS_LABELS = {
-  NEW:         "Nouvelle alerte",
+  PENDING_ASSIGNMENT:"À affecter", UNCONFIRMED:"Non confirmé", DUPLICATE:"Doublon",
+  NEW:         "Nouveau",
   ACKNOWLEDGED:"Prise en charge",
   EN_ROUTE:    "Equipe en route",
   ON_SITE:     "Equipe sur site",
@@ -62,6 +62,9 @@ export function EmergencyScreen() {
   const [description, setDescription] = useState("");
   const [photos, setPhotos] = useState([]);
   const [coords, setCoords] = useState(null);
+  const [presence,setPresence]=useState(false),[victims,setVictims]=useState("");
+  const requestId=useRef(newRequestId()),submissionLock=useRef(false);
+  useEffect(()=>{requestId.current=newRequestId();},[targetService,phoneNumber,emergencyType,pickupPointName,description,photos,victims]);
   const [loadingGps, setLoadingGps] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [myReports, setMyReports] = useState([]);
@@ -75,26 +78,12 @@ export function EmergencyScreen() {
   }
 
   async function loadPosition() {
-    setLoadingGps(true);
-    setError("");
+    setLoadingGps(true);setError("");setCoords(null);
     try {
-      const perm = await Location.requestForegroundPermissionsAsync();
-      if (perm.status !== "granted") throw new Error("Permission de localisation refusee");
-      const current = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Highest });
-      const accuracyMeters = Number(current?.coords?.accuracy);
-      if (!Number.isFinite(accuracyMeters)) throw new Error("Precision GPS indisponible. Reessayez.");
-      if (accuracyMeters > MAX_GPS_RADIUS_METERS) {
-        throw new Error(`Precision GPS trop faible (${Math.round(accuracyMeters)} m). Rapprochez-vous d'une zone ouverte.`);
-      }
-      setCoords({ latitude: current.coords.latitude, longitude: current.coords.longitude, accuracyMeters });
-      Location.reverseGeocodeAsync({ latitude: current.coords.latitude, longitude: current.coords.longitude })
-        .then((places) => setCoords((previous) => previous?.latitude === current.coords.latitude && previous?.longitude === current.coords.longitude
-          ? { ...previous, city: places[0]?.city || "" } : previous)).catch(() => {});
-    } catch (err) {
-      setError(err.message || "Impossible de recuperer la position GPS");
-    } finally {
-      setLoadingGps(false);
-    }
+      const policy=await apiFetch("/incidents/policy",{token,cache:false,queueOffline:false});
+      const position=await captureIncidentPosition(Location,policy);setCoords(position);return position;
+    } catch(err){setCoords(null);setError(err.message||"Impossible de récupérer le GPS. Activez la localisation puis réessayez.");throw err;}
+    finally{setLoadingGps(false);}
   }
 
   useEffect(() => { loadPosition().catch(() => {}); }, []);
@@ -119,26 +108,31 @@ export function EmergencyScreen() {
       String(emergencyType || "").trim().length >= 3 &&
       String(pickupPointName || "").trim().length >= 3 &&
       String(description || "").trim().length >= 10 &&
-      !!coords &&
+      presence && !!coords &&
       Number.isFinite(Number(coords.accuracyMeters)) &&
-      Number(coords.accuracyMeters) <= MAX_GPS_RADIUS_METERS
+      Number.isFinite(coords.locationTimestamp)
     );
-  }, [phoneNumber, emergencyType, pickupPointName, description, coords]);
+  }, [phoneNumber, emergencyType, pickupPointName, description, coords, presence]);
 
   async function submitEmergencyReport() {
     setError("");
     setSuccess("");
     if (!canSubmit) {
-      setError(`Completez le formulaire et utilisez une position GPS acceptable (max ${MAX_GPS_RADIUS_METERS} m).`);
+      setError("Complétez le formulaire, obtenez une position GPS valide et confirmez votre présence.");
       return;
     }
+    if(submissionLock.current)return;submissionLock.current=true;
+    const submissionId=requestId.current;
     setSubmitting(true);
     try {
+      if(!presence)throw new Error("Confirmez votre présence sur les lieux.");
+      const fresh=await loadPosition();
+      if(victims!==""&&(!/^\d+$/.test(victims)||Number(victims)>10000))throw new Error("Nombre de victimes invalide.");
       const normalizedPhone = normalizePhone(phoneNumber);
       await AsyncStorage.setItem(EMERGENCY_PHONE_KEY, normalizedPhone);
       const result = await apiFetch("/emergency-reports", {
         token,
-        method: "POST",
+        method: "POST", queueOffline:false,
         body: {
           targetService,
           phoneNumber: normalizedPhone,
@@ -146,17 +140,11 @@ export function EmergencyScreen() {
           pickupPointName: pickupPointName.trim(),
           description: description.trim(),
           photos,
-          latitude: coords.latitude,
-          longitude: coords.longitude,
-          city: coords.city || ""
+          ...fresh, presenceConfirmed:presence, victimCount:victims===""?null:Number(victims), clientRequestId:submissionId
         }
       });
-      if (result?.queued) {
-        setSuccess(result.message || "Signalement enregistre hors ligne.");
-      } else {
-        const reportId = result?.report?.id ? ` #${result.report.id}` : "";
-        setSuccess(`Signalement envoye${reportId}.`);
-      }
+      const reportId = result?.report?.id ? ` #${result.report.id}` : "";
+      setSuccess(`Signalement envoyé${reportId}. ${result?.report?.userStatusMessage || ""} ${result?.warning || ""}`);
       trackEvent("emergency", "send_emergency", {
         targetService,
         emergencyType: emergencyType.trim(),
@@ -164,11 +152,12 @@ export function EmergencyScreen() {
       });
       setPickupPointName("");
       setDescription("");
-      setPhotos([]);
+      setPhotos([]);setPresence(false);setVictims("");setCoords(null);requestId.current=newRequestId();
+      await loadMyReports();
     } catch (err) {
       setError(err.message || "Envoi impossible");
     } finally {
-      setSubmitting(false);
+      submissionLock.current=false;setSubmitting(false);
     }
   }
 
@@ -207,7 +196,7 @@ export function EmergencyScreen() {
   }, [token]);
 
   const trackedReports = useMemo(
-    () => myReports.filter((report) => String(report?.status || "").toUpperCase() !== "NEW"),
+    () => myReports,
     [myReports]
   );
   const visibleReports = useMemo(
@@ -218,22 +207,12 @@ export function EmergencyScreen() {
   const activeContact = EMERGENCY_CONTACTS.find((c) => c.id === targetService);
   const availableEmergencyTypes = EMERGENCY_TYPES_BY_SERVICE[targetService] || [];
 
-  function gpsAccuracyInfo() {
-    if (!coords) return { label: `Precision cible: ${IDEAL_GPS_RADIUS_METERS}-${TARGET_GPS_RADIUS_METERS} m`, color: C.textMuted };
-    const acc = Number(coords.accuracyMeters);
-    if (acc <= IDEAL_GPS_RADIUS_METERS) return { label: "GPS excellent", color: C.green };
-    if (acc <= TARGET_GPS_RADIUS_METERS) return { label: "GPS correct", color: C.green };
-    if (acc <= 50)  return { label: "GPS moyen - envoi autorise", color: C.amber };
-    return { label: "GPS faible - envoi autorise", color: C.orange };
-  }
-
-  const gpsInfo = gpsAccuracyInfo();
-
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
 
       <View style={styles.header}>
         <Text style={styles.title}>Signaler une urgence</Text>
+        <Text style={[styles.subtitle,{color:C.red,fontWeight:"700"}]}>Mettez-vous en sécurité avant de signaler. Ne vous exposez pas pour prendre une photo.</Text>
         <Text style={styles.subtitle}>Votre signalement inclut le service, votre telephone, la position GPS et la description.</Text>
         <Text style={styles.subtitle}>Votre signalement est transmis au service de secours choisi, dans la zone de ses bases habilitées. Vous seul pouvez consulter votre suivi personnel ; les autres utilisateurs ne voient pas votre signalement.</Text>
       </View>
@@ -316,6 +295,7 @@ export function EmergencyScreen() {
           placeholder="Decrivez clairement ce qui se passe..."
           placeholderTextColor={C.textLight}
           value={description}
+          maxLength={1000}
           onChangeText={setDescription}
         />
       </View>
@@ -331,25 +311,7 @@ export function EmergencyScreen() {
         ) : null}
       </View>
 
-      {/* GPS */}
-      <View style={styles.sectionCard}>
-        <Text style={styles.sectionLabel}>POSITION GPS</Text>
-        {coords ? (
-          <View style={styles.coordsBox}>
-            <Text style={styles.coordsText}>{coords.latitude.toFixed(6)}, {coords.longitude.toFixed(6)}</Text>
-            <Text style={[styles.coordsAccuracy, { color: gpsInfo.color }]}>
-              {gpsInfo.label} (~{Math.round(Number(coords.accuracyMeters))} m)
-            </Text>
-          </View>
-        ) : (
-          <Text style={shared.hint}>Position non disponible</Text>
-        )}
-        <Pressable style={styles.gpsBtn} onPress={loadPosition}>
-          <Text style={styles.gpsBtnText}>
-            {loadingGps ? "Localisation en cours..." : coords ? "Actualiser la position" : "Obtenir ma position GPS"}
-          </Text>
-        </Pressable>
-      </View>
+      <IncidentGpsPanel position={coords} busy={loadingGps} onRefresh={()=>loadPosition().catch(()=>{})} presence={presence} onPresence={setPresence} victims={victims} onVictims={setVictims}/>
 
       {error   ? <Text style={styles.errorMsg}>{error}</Text>   : null}
       {success ? <Text style={styles.successMsg}>{success}</Text> : null}

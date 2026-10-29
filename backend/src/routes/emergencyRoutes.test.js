@@ -6,38 +6,41 @@ import { pool } from '../config/db.js';
 
 async function setup(t) {
   const queries = [];
-  const original = pool.query;
+  const original = pool.query,originalConnect=pool.connect;
   pool.query = async (sql, params) => {
     queries.push({sql,params});
+    if(sql.includes("FROM incident_policy"))return{rows:[{max_age_seconds:60,max_accuracy_meters:100}]};
     return { rowCount: sql.includes('INSERT INTO emergency_reports') ? 1 : 0, rows: sql.includes('INSERT INTO emergency_reports') ? [{ id: 7, user_id: params[0], target_service: params[1], status: 'NEW' }] : [] };
   };
-  t.after(()=>{pool.query=original;});
+  pool.connect=async()=>({query:(...args)=>pool.query(...args),release(){}});
+  t.after(()=>{pool.query=original;pool.connect=originalConnect;});
   const app=express(); app.use(express.json());
   app.use('/emergency',createEmergencyRouter({auth:(req,res,next)=>{
     if(!req.headers['x-role'])return res.sendStatus(401);
     req.user={id:'12',role:req.headers['x-role'],roles:[req.headers['x-role']]};next();
   }}));
+  app.use((e,req,res,next)=>res.status(e.status||500).json({message:e.message}));
   const server=await new Promise(resolve=>{const s=app.listen(0,'127.0.0.1',()=>resolve(s));});
   t.after(()=>{server.closeAllConnections();server.close();});
   return {queries,request:(path,method='GET',body,role='USER')=>fetch(`http://127.0.0.1:${server.address().port}/emergency${path}`,{method,headers:{'Content-Type':'application/json',...(role?{'x-role':role}:{})},...(body?{body:JSON.stringify(body)}:{})})};
 }
 
-test('a connected public user can report an emergency with their own identity',async t=>{
-  const {request,queries}=await setup(t);
-  const r=await request('/','POST',{userId:999,targetService:'SAMU',phoneNumber:'0102030405',emergencyType:'Malaise',pickupPointName:'Point de test',description:'Description de verification',latitude:5.3,longitude:-4});
-  assert.equal(r.status,201);assert.equal((await r.json()).report.userId,'12');assert.equal(queries[0].params[0],12);
+test('legacy emergency submission cannot bypass the mandatory GPS confirmation',async t=>{
+ const {request}=await setup(t);
+ const r=await request('/','POST',{targetService:'SAMU',phoneNumber:'0102030405',emergencyType:'Malaise',pickupPointName:'Point fictif',description:'Description de test fictif',latitude:5.3,longitude:-4,clientRequestId:'test_request_12345'});
+ assert.equal(r.status,400);assert.match((await r.json()).message,/Confirmez/);
 });
 
 test('public users can only load their own report history',async t=>{
   const {request,queries}=await setup(t);
   assert.equal((await request('/mine?userId=999')).status,200);
-  assert.match(queries[0].sql,/WHERE er.user_id = \$1/);assert.deepEqual(queries[0].params,[12]);
+  assert.match(queries[0].sql,/WHERE r.user_id=\$1/);assert.deepEqual(queries[0].params,[12]);
 });
 
 test('all operational endpoints remain forbidden for public users',async t=>{
   const {request,queries}=await setup(t);
   for(const [path,method] of [['/','GET'],['/7/acknowledge','POST'],['/7/progress','PATCH'],['/bases','POST'],['/bases','GET']])assert.equal((await request(path,method)).status,403);
-  assert.equal(queries.length,0);
+  assert.ok(!queries.some(q=>/FROM emergency_reports/.test(q.sql)));
 });
 
 test('anonymous reports and history are rejected, while responders retain access',async t=>{
@@ -51,7 +54,7 @@ test('anonymous reports and history are rejected, while responders retain access
 test('developer-only accounts cannot bypass operational privacy',async t=>{
   const {request,queries}=await setup(t);
   for(const [path,method,body] of [['/','GET'],['/7/acknowledge','POST'],['/7/progress','PATCH',{status:'EN_ROUTE'}],['/local-alerts','GET']])assert.equal((await request(path,method,body,'DEVELOPER')).status,403);
-  assert.equal(queries.length,0);
+  assert.ok(!queries.some(q=>/FROM emergency_reports/.test(q.sql)));
 });
 
 test('listing and direct mutations share the assigned base scope',async t=>{
@@ -59,6 +62,8 @@ test('listing and direct mutations share the assigned base scope',async t=>{
   await request('/?all=true','GET',undefined,'SAMU');
   assert.equal((await request('/7/acknowledge','POST',{},'SAMU')).status,404);
   assert.equal((await request('/7/progress','PATCH',{status:'EN_ROUTE'},'SAMU')).status,404);
-  assert.equal(queries.length,3);
-  for(const {sql} of queries){assert.match(sql,/user_service_bases/);assert.match(sql,/eb.is_active=TRUE/);assert.match(sql,/eb.radius_km/);}
+  const scoped=queries.filter(q=>q.sql.includes("FROM emergency_reports r"));
+  assert.equal(scoped.length,3);
+  for(const {sql} of scoped){assert.match(sql,/user_service_bases/);assert.match(sql,/eb.is_active=TRUE/);assert.match(sql,/assigned_base_id/);assert.doesNotMatch(sql,/radius_km/);}
+
 });

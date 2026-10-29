@@ -32,14 +32,16 @@ type ApiFetchOptions = {
   token?: string | null;
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   body?: unknown;
+  responseType?: "json" | "blob";
 };
 
 export async function apiFetch<T = unknown>(path: string, options: ApiFetchOptions = {}): Promise<T> {
-  const { token, method = "GET", body } = options;
+  const { token, method = "GET", body, responseType = "json" } = options;
   let response: Response;
   try {
     response = await fetch(`${API_URL}${path}`, {
       method,
+      ...(path.startsWith("/incidents") ? {cache:"no-store" as RequestCache} : {}),
       headers: {
         "Content-Type": "application/json",
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -51,7 +53,7 @@ export async function apiFetch<T = unknown>(path: string, options: ApiFetchOptio
   }
 
   const isJsonResponse = String(response.headers.get("content-type") || "").includes("application/json");
-  const data = isJsonResponse ? await response.json().catch(() => ({})) : {};
+  const data = isJsonResponse && (!response.ok || responseType !== "blob") ? await response.json().catch(() => ({})) : {};
 
   if (!response.ok) {
     // The backend normally supplies its own message, including on expired tokens.
@@ -74,5 +76,5 @@ export async function apiFetch<T = unknown>(path: string, options: ApiFetchOptio
     throw new ApiError(message, response.status, data, path);
   }
 
-  return data as T;
+  return (responseType === "blob" ? await response.blob() : data) as T;
 }

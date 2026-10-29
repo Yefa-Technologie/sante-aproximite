@@ -4,6 +4,7 @@ export type User = {
   email?: string;
   role?: string;
   roles?: string[];
+  incidentCoordination?: boolean;
   permissions?: string[];
   establishmentCode?: string | null;
   regionCode?: string | null;
@@ -86,7 +87,12 @@ const PROFILE_NAV_ITEM: NavItem = { key: "profile", label: "Mon profil", icon: "
 
 export function getNavItems(user: User | null | undefined): NavItem[] {
   if (!user) return [];
-  return [...getRoleNavItems(user).filter(item => (item.key !== "emergency-alerts" || isEmergencyResponder(user)) && (item.key !== "security-alerts" || isSecurityResponder(user))), PROFILE_NAV_ITEM];
+  const items=getRoleNavItems(user).filter(item=>(item.key!=="emergency-alerts" || isEmergencyResponder(user) || user.incidentCoordination) && (item.key!=="security-alerts" || isSecurityResponder(user) || user.incidentCoordination));
+  if(user.incidentCoordination) {
+    if(!items.some(i=>i.key==="emergency-alerts"))items.push({key:"emergency-alerts",label:"Coordination sanitaire",icon:"siren",section:"URGENCES"});
+    if(!items.some(i=>i.key==="security-alerts"))items.push({key:"security-alerts",label:"Coordination sécurité",icon:"shield-alert",section:"SECURITE"});
+  }
+  return [...items,PROFILE_NAV_ITEM];
 }
 
 function getRoleNavItems(user: User): NavItem[] {

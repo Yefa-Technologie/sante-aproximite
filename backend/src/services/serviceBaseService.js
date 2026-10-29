@@ -1,4 +1,5 @@
 import { pool } from "../config/db.js";
+import { requeueInactiveCenter } from "./incidentCenterLifecycle.js";
 
 export const SERVICE_ROLES = ["SAMU", "SAPEUR_POMPIER", "POLICE", "GENDARMERIE", "PROTECTION_CIVILE"];
 export const MEDICAL_ROLES = ["SAMU", "SAPEUR_POMPIER"];
@@ -12,18 +13,7 @@ export const cityKey = (value) => String(value || "").normalize("NFD").replace(/
 function invalid(message, status = 400) { return Object.assign(new Error(message), { status }); }
 
 // Every operational query (including mutations by ID) uses this same base/service scope.
-export function baseScopeSql(alias, user, params, allowed = SERVICE_ROLES) {
-  const services = serviceRoles(user, allowed);
-  if (!services.length) return "FALSE";
-  params.push(Number(user.id), services);
-  const id = `$${params.length - 1}`, types = `$${params.length}::text[]`;
-  return `EXISTS (SELECT 1 FROM user_service_bases usb JOIN emergency_bases eb ON eb.id=usb.base_id
-    WHERE usb.user_id=${id} AND usb.service_type=ANY(${types}) AND eb.service_type=${alias}.target_service
-    AND eb.is_active=TRUE AND eb.approval_status='APPROVED'
-    AND ((eb.city_key <> '' AND eb.city_key=${alias}.city_key) OR
-      6371*acos(LEAST(1.0,GREATEST(-1.0,sin(radians(eb.latitude))*sin(radians(${alias}.latitude))+
-      cos(radians(eb.latitude))*cos(radians(${alias}.latitude))*cos(radians(eb.longitude-${alias}.longitude))))) <= eb.radius_km))`;
-}
+export { incidentScopeSql as baseScopeSql } from "./incidentAccess.js";
 
 export function mapBase(row) {
   return { id: String(row.id), name: row.name, serviceType: row.service_type, address: row.address,
@@ -92,10 +82,16 @@ export async function writeServiceBase(req, res) {
     const id = Number(req.params.id);
     if (!Number.isSafeInteger(id) || id<=0) return res.sendStatus(400);
     // Service is immutable, so an assigned SAMU base cannot become a police station.
-    result = await pool.query(`UPDATE emergency_bases SET name=$1,address=$3,latitude=$4,longitude=$5,
-      city=$6,city_key=$7,radius_km=$8,is_active=$9,updated_at=NOW()
-      WHERE id=$10 AND service_type=$2 RETURNING *`, [...values.filter((_,i)=>i!==5),id]);
-    if (!result.rows.length) return res.status(400).json({ message: "Base introuvable ou changement de service interdit. Créez une autre base pour un autre service." });
+    const db=await pool.connect();
+    try {
+      await db.query("BEGIN");
+      result = await db.query(`UPDATE emergency_bases SET name=$1,address=$3,latitude=$4,longitude=$5,
+        city=$6,city_key=$7,radius_km=$8,is_active=$9,updated_at=NOW()
+        WHERE id=$10 AND service_type=$2 RETURNING *`, [...values.filter((_,i)=>i!==5),id]);
+      if (!result.rows.length) throw invalid("Base introuvable ou changement de service interdit. Créez une autre base pour un autre service.");
+      if(body.isActive===false) await requeueInactiveCenter(db,id,Number(req.user.id));
+      await db.query("COMMIT");
+    }catch(e){await db.query("ROLLBACK");throw e;}finally{db.release();}
   } else result = await pool.query(`INSERT INTO emergency_bases(name,service_type,address,latitude,longitude,created_by,city,city_key,radius_km,is_active,approval_status)
     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'APPROVED') RETURNING *`, values);
   res.status(req.params.id ? 200 : 201).json(mapBase(result.rows[0]));

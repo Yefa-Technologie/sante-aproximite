@@ -4,7 +4,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { apiFetch } from "../api/client";
 import { subscribeLocalEmergencyNotifications } from "../notifications";
 import { C } from "../theme";
-const statusLabel={NEW:"Nouveau",ACKNOWLEDGED:"Pris en charge",EN_ROUTE:"Équipe en route",ON_SITE:"Équipe sur place"};
+const statusLabel={PENDING_ASSIGNMENT:"À affecter",NEW:"Nouveau",ACKNOWLEDGED:"Pris en charge",EN_ROUTE:"Équipe en route",ON_SITE:"Équipe sur place"};
 export function LocalEmergencyAlerts({token,onNavigate}) {
   const [open,setOpen]=useState(false),[alerts,setAlerts]=useState([]),[bases,setBases]=useState([]);
   const [needsAssignment,setNeedsAssignment]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState("");
@@ -35,8 +35,8 @@ export function LocalEmergencyAlerts({token,onNavigate}) {
       <SafeAreaView style={{flex:1,backgroundColor:C.bg}}><ScrollView contentContainerStyle={{padding:18,gap:16}}>
         <Pressable onPress={()=>setOpen(false)}><Text style={{color:C.primary,fontWeight:"700"}}>‹ Retour</Text></Pressable>
         <Text style={{fontSize:23,fontWeight:"800"}}>Alertes de votre base</Text>
-        <Text>Seuls les signalements destinés à votre service, dans la ville ou le rayon d’intervention de votre base, sont affichés.</Text>
-        {bases.map(b=><Text key={b.id}>{b.name} · {b.serviceType.replaceAll("_"," ")} · {b.city} · rayon {b.radiusKm} km</Text>)}
+        <Text>Seuls les signalements affectés à vos centres, les renforts explicitement autorisés et les dossiers permis à votre coordination sont affichés.</Text>
+        {bases.map(b=><Text key={b.id}>{b.name} · {b.serviceType.replaceAll("_"," ")} · {b.city}</Text>)}
         {needsAssignment?<Text style={{color:C.red}}>Aucune base active n’est affectée à votre compte. Demandez à l’administrateur de vous affecter une base depuis le web.</Text>:null}
         <Pressable onPress={refresh} disabled={busy}><Text style={{color:C.primary,fontWeight:"700"}}>Actualiser</Text></Pressable>
         {busy?<ActivityIndicator color={C.primary}/>:null}

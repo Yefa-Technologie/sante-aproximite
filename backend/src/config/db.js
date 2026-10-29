@@ -1,3 +1,4 @@
+import { migrateIncidents } from "./incidentMigration.js";
 import { Pool } from "pg";
 import { env } from "./env.js";
 
@@ -397,7 +398,7 @@ async function runMigrations() {
   await pool.query(`
     ALTER TABLE emergency_reports
     ADD CONSTRAINT emergency_reports_status_check
-    CHECK (status IN ('NEW', 'ACKNOWLEDGED', 'EN_ROUTE', 'ON_SITE', 'COMPLETED', 'CLOSED'));
+    CHECK (status IN ('PENDING_ASSIGNMENT','NEW','ACKNOWLEDGED','EN_ROUTE','ON_SITE','COMPLETED','UNCONFIRMED','DUPLICATE','CLOSED','RESOLVED'));
   `);
 
   await pool.query(`
@@ -1112,6 +1113,7 @@ export async function connectDb() {
     ALTER TABLE security_alerts ADD COLUMN IF NOT EXISTS city TEXT NOT NULL DEFAULT '';
     ALTER TABLE security_alerts ADD COLUMN IF NOT EXISTS city_key TEXT NOT NULL DEFAULT '';
   `);
+  await migrateIncidents(pool);
   console.log("PostgreSQL connected");
 }
 

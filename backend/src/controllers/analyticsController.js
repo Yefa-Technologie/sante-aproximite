@@ -1,14 +1,19 @@
+import { incidentScopeSql } from "../services/incidentAccess.js";
+import { SERVICE_ROLES } from "../services/serviceBaseService.js";
 import { pool } from "../config/db.js";
 
 export async function getUserActions(req, res) {
   const userId = Number(req.params.userId);
   if (!userId) return res.status(400).json({ message: "userId invalide" });
 
+  const medicalParams=[userId],securityParams=[userId];
+  const medicalScope=incidentScopeSql("r",req.user,medicalParams,SERVICE_ROLES,"medical");
+  const securityScope=incidentScopeSql("r",req.user,securityParams,SERVICE_ROLES,"security");
   const [events, complaints, emergencies, securityAlerts] = await Promise.all([
     pool.query(
       `SELECT module, action, metadata, created_at
        FROM analytics_events
-       WHERE user_id = $1
+       WHERE user_id = $1 AND module NOT IN ('emergency','security_alert','alerts','security_ops')
        ORDER BY created_at DESC
        LIMIT 200`,
       [userId]
@@ -22,17 +27,17 @@ export async function getUserActions(req, res) {
     ),
     pool.query(
       `SELECT id, target_service, status, created_at
-       FROM emergency_reports
-       WHERE user_id = $1
+       FROM emergency_reports r
+       WHERE user_id = $1 AND ${medicalScope}
        ORDER BY created_at DESC`,
-      [userId]
+      medicalParams
     ),
     pool.query(
       `SELECT id, target_service, alert_type, status, created_at
-       FROM security_alerts
-       WHERE user_id = $1
+       FROM security_alerts r
+       WHERE user_id = $1 AND ${securityScope}
        ORDER BY created_at DESC`,
-      [userId]
+      securityParams
     ),
   ]);
 
@@ -85,46 +90,49 @@ export async function logEvent(req, res) {
 export async function getSummary(req, res) {
   const days = Math.min(Math.max(Number(req.query.days) || 30, 1), 365);
   const interval = `${days} days`;
+  const medicalParams=[interval],securityParams=[interval];
+  const medicalScope=incidentScopeSql("r",req.user,medicalParams,SERVICE_ROLES,"medical");
+  const securityScope=incidentScopeSql("r",req.user,securityParams,SERVICE_ROLES,"security");
 
-  const [byModule, byAction, byRole, daily, uniqueUsers, totalRow, publicVsPro, healthCenterUsage, complaintsStats, emergencyStats, securityStats] =
+  const [byModule, byAction, byRole, daily, uniqueUsers, totalRow, publicVsPro, complaintsStats, emergencyStats, securityStats, healthCenterUsage] =
     await Promise.all([
       pool.query(
         `SELECT module, COUNT(*) AS count
          FROM analytics_events
-         WHERE created_at > NOW() - $1::interval
+         WHERE created_at > NOW() - $1::interval AND module NOT IN ('emergency','security_alert','alerts','security_ops')
          GROUP BY module ORDER BY count DESC`,
         [interval]
       ),
       pool.query(
         `SELECT module, action, COUNT(*) AS count
          FROM analytics_events
-         WHERE created_at > NOW() - $1::interval
+         WHERE created_at > NOW() - $1::interval AND module NOT IN ('emergency','security_alert','alerts','security_ops')
          GROUP BY module, action ORDER BY count DESC LIMIT 50`,
         [interval]
       ),
       pool.query(
         `SELECT COALESCE(user_role, 'anonyme') AS user_role, COUNT(*) AS count
          FROM analytics_events
-         WHERE created_at > NOW() - $1::interval
+         WHERE created_at > NOW() - $1::interval AND module NOT IN ('emergency','security_alert','alerts','security_ops')
          GROUP BY user_role ORDER BY count DESC`,
         [interval]
       ),
       pool.query(
         `SELECT DATE(created_at) AS day, COUNT(*) AS count
          FROM analytics_events
-         WHERE created_at > NOW() - $1::interval
+         WHERE created_at > NOW() - $1::interval AND module NOT IN ('emergency','security_alert','alerts','security_ops')
          GROUP BY day ORDER BY day`,
         [interval]
       ),
       pool.query(
         `SELECT COUNT(DISTINCT user_id) AS count
          FROM analytics_events
-         WHERE created_at > NOW() - $1::interval AND user_id IS NOT NULL`,
+         WHERE created_at > NOW() - $1::interval AND module NOT IN ('emergency','security_alert','alerts','security_ops') AND user_id IS NOT NULL`,
         [interval]
       ),
       pool.query(
         `SELECT COUNT(*) AS count FROM analytics_events
-         WHERE created_at > NOW() - $1::interval`,
+         WHERE created_at > NOW() - $1::interval AND module NOT IN ('emergency','security_alert','alerts','security_ops')`,
         [interval]
       ),
       pool.query(
@@ -133,7 +141,7 @@ export async function getSummary(req, res) {
            SUM(CASE WHEN user_role != 'USER' AND user_role IS NOT NULL THEN 1 ELSE 0 END) AS pro_count,
            SUM(CASE WHEN user_role IS NULL THEN 1 ELSE 0 END) AS anon_count
          FROM analytics_events
-         WHERE created_at > NOW() - $1::interval`,
+         WHERE created_at > NOW() - $1::interval AND module NOT IN ('emergency','security_alert','alerts','security_ops')`,
         [interval]
       ),
       pool.query(
@@ -154,22 +162,22 @@ export async function getSummary(req, res) {
            SUM(CASE WHEN status IN ('ACKNOWLEDGED','EN_ROUTE','ON_SITE') THEN 1 ELSE 0 END) AS in_progress_count,
            SUM(CASE WHEN status IN ('COMPLETED','CLOSED') THEN 1 ELSE 0 END) AS resolved_count,
            target_service
-         FROM emergency_reports
-         WHERE created_at > NOW() - $1::interval
+         FROM emergency_reports r
+         WHERE created_at > NOW() - $1::interval AND ${medicalScope}
          GROUP BY GROUPING SETS ((), (target_service))`,
-        [interval]
+        medicalParams
       ),
       pool.query(
         `SELECT
            COUNT(*) AS total,
            SUM(CASE WHEN status = 'NEW' THEN 1 ELSE 0 END) AS new_count,
-           SUM(CASE WHEN status = 'ACKNOWLEDGED' THEN 1 ELSE 0 END) AS in_progress_count,
-           SUM(CASE WHEN status IN ('RESOLVED','CLOSED') THEN 1 ELSE 0 END) AS resolved_count,
+           SUM(CASE WHEN status IN ('ACKNOWLEDGED','EN_ROUTE','ON_SITE') THEN 1 ELSE 0 END) AS in_progress_count,
+           SUM(CASE WHEN status IN ('COMPLETED','RESOLVED','CLOSED') THEN 1 ELSE 0 END) AS resolved_count,
            target_service
-         FROM security_alerts
-         WHERE created_at > NOW() - $1::interval
+         FROM security_alerts r
+         WHERE created_at > NOW() - $1::interval AND ${securityScope}
          GROUP BY GROUPING SETS ((), (target_service))`,
-        [interval]
+        securityParams
       ),
       pool.query(
         `

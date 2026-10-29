@@ -28,7 +28,7 @@ export function ServiceBasesTab({token}:{token:string}) {
   }
   const lat=Number(form.latitude),lon=Number(form.longitude),valid=form.latitude!==""&&form.longitude!==""&&Number.isFinite(lat)&&Number.isFinite(lon)&&Math.abs(lat)<=90&&Math.abs(lon)<=180;
   return <div className="flex flex-col gap-4">
-    <p className="text-sm text-slate-600">Créez et géolocalisez les bases SAMU, sapeurs-pompiers et sécurité. Chaque compte professionnel doit être affecté à une base de son service dans l’onglet Utilisateurs. Les alertes concernent la même ville ou le rayon indiqué autour de la base.</p>
+    <p className="text-sm text-slate-600">Créez et géolocalisez les bases SAMU, sapeurs-pompiers et sécurité. Chaque compte professionnel doit être affecté à une base de son service dans l’onglet Utilisateurs. Les signalements sont affectés selon les périmètres configurés plus bas ; la ville et le rayon ne donnent pas de droit d’accès.</p>
     <form onSubmit={submit} className="grid gap-3 rounded-2xl border bg-white p-5 sm:grid-cols-2">
       <label className="text-sm">Service<Select disabled={!!editing} value={form.serviceType} onChange={e=>setForm(f=>({...f,serviceType:e.target.value}))}>{SERVICE_ROLES.map(r=><option key={r}>{r}</option>)}</Select></label>
       <label className="text-sm">Nom de la base<Input required value={form.name} onChange={e=>setForm(f=>({...f,name:e.target.value}))}/></label>
@@ -36,7 +36,6 @@ export function ServiceBasesTab({token}:{token:string}) {
       <label className="text-sm">Adresse<Input required value={form.address} onChange={e=>setForm(f=>({...f,address:e.target.value}))}/></label>
       <label className="text-sm">Latitude GPS<Input required type="number" step="any" min="-90" max="90" value={form.latitude} onChange={e=>setForm(f=>({...f,latitude:e.target.value}))}/></label>
       <label className="text-sm">Longitude GPS<Input required type="number" step="any" min="-180" max="180" value={form.longitude} onChange={e=>setForm(f=>({...f,longitude:e.target.value}))}/></label>
-      <label className="text-sm">Rayon d’intervention (km)<Input required type="number" min="1" max="200" step="any" value={form.radiusKm} onChange={e=>setForm(f=>({...f,radiusKm:e.target.value}))}/></label>
       <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.isActive} onChange={e=>setForm(f=>({...f,isActive:e.target.checked}))}/>Base active</label>
       <div className="col-span-full flex flex-wrap gap-3"><Button type="button" variant="outline" onClick={locate}>Utiliser ma position actuelle</Button><span className="text-xs text-slate-500">À utiliser uniquement si vous êtes sur le site de la base.</span></div>
       {valid?<iframe title="Position de la base sur la carte" loading="lazy" className="col-span-full h-64 w-full rounded-xl border" src={`https://www.openstreetmap.org/export/embed.html?bbox=${lon-.02},${lat-.02},${lon+.02},${lat+.02}&layer=mapnik&marker=${lat},${lon}`}/>:null}
@@ -44,7 +43,7 @@ export function ServiceBasesTab({token}:{token:string}) {
     </form>
     {error?<Alert variant="error">{error}</Alert>:null}{success?<Alert variant="success">{success}</Alert>:null}
     <div className="grid gap-3 sm:grid-cols-2">{bases.map(b=><div key={b.id} className="rounded-xl border bg-white p-4 text-sm">
-      <strong>{b.name}</strong><p>{b.serviceType.replaceAll("_"," ")} · {b.isActive?"Active":"Inactive"}</p><p>{b.city} · {b.address}</p><p>GPS : {b.latitude}, {b.longitude} · rayon {b.radiusKm} km</p>
+      <strong>{b.name}</strong><p>{b.serviceType.replaceAll("_"," ")} · {b.isActive?"Active":"Inactive"}</p><p>{b.city} · {b.address}</p><p>GPS : {b.latitude}, {b.longitude}</p>
       <Button type="button" variant="outline" onClick={()=>{setEditing(b.id);setForm({...b,latitude:String(b.latitude),longitude:String(b.longitude),radiusKm:String(b.radiusKm)});setError("");setSuccess("");window.scrollTo({top:0,behavior:"smooth"});}}>Modifier</Button>
     </div>)}</div>
     {!bases.length&&!error?<p>Aucune base créée.</p>:null}

@@ -55,3 +55,15 @@ test('live emergency alerts never fall back to an outdated cached result', async
   app.storage.set('sante_aproxmite_cache_expired_%2Femergency-reports%2Flocal-alerts',JSON.stringify({savedAt:Date.now(),data:{alerts:[{id:'old'}]}}));
   await assert.rejects(app.apiFetch('/emergency-reports/local-alerts',{token:'expired',cache:false,queueOffline:false}));
 });
+
+test('emergency creation never enters the offline queue even with default options',async()=>{
+  const app=setup([new Error('Network request failed')]);
+  await assert.rejects(app.apiFetch('/emergency-reports',{token:'expired',method:'POST',body:{latitude:7,longitude:-5}}));
+  assert.ok(![...app.storage.keys()].some(k=>k.includes('offline')));
+});
+test('stale emergency submissions in an old offline queue are discarded, never replayed',async()=>{
+  const app=setup([]);
+  app.storage.set('sante_aproxmite_offline_queue',JSON.stringify([{path:'/emergency-reports',method:'POST',body:{latitude:7,longitude:-5}}]));
+  await app.syncPendingRequests();
+  assert.equal(app.calls.length,0);
+});

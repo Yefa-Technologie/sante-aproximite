@@ -30,3 +30,20 @@ test('a late response for an old token does not clear a newer login',async()=>{
 test('network errors and forbidden actions preserve the session',async()=>{
   for(const options of [{network:true},{status:403}]){const api=setup(options);await assert.rejects(api.apiFetch('/centers',{token:'expired'}));assert.equal(api.redirects.length,0);assert.equal(api.storage.get('sante_web_token'),'expired');}
 });
+
+function setupCsv(response){
+  const storage=new Map([['sante_web_token','session'],['sante_web_user','{}']]),redirects=[],calls=[],exports={};
+  vm.runInNewContext(code,{exports,process:{env:{}},Blob,fetch:async(url,options)=>{calls.push({url,options});return response;},window:{location:{pathname:'/dashboard/emergency-alerts',replace:path=>redirects.push(path)}},localStorage:{getItem:k=>storage.get(k)||null,removeItem:k=>storage.delete(k)}});
+  return {...exports,storage,redirects,calls};
+}
+test('an expired session during a CSV export clears the session and returns to login',async()=>{
+  const app=setupCsv({ok:false,status:401,headers:{get:()=> 'application/json'},json:async()=>({message:'Token invalide'})});
+  await assert.rejects(app.apiFetch('/incidents/medical/export',{token:'session',responseType:'blob'}),/Token invalide/);
+  assert.equal(app.storage.has('sante_web_token'),false);assert.deepEqual(app.redirects,['/login']);
+});
+test('authorized CSV exports return a blob with bearer authorization and no browser cache',async()=>{
+  const data=new Blob(['id;statut\n1;NEW']);
+  const app=setupCsv({ok:true,status:200,headers:{get:()=> 'text/csv'},blob:async()=>data});
+  assert.equal(await app.apiFetch('/incidents/medical/export',{token:'session',responseType:'blob'}),data);
+  assert.equal(app.calls[0].options.headers.Authorization,'Bearer session');assert.equal(app.calls[0].options.cache,'no-store');assert.deepEqual(app.redirects,[]);
+});

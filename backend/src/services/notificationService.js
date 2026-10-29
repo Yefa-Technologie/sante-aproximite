@@ -7,8 +7,8 @@ export async function registerPushToken(userId, token, appKey = "mobile") {
     `
       INSERT INTO push_tokens (user_id, token, app_key, updated_at)
       VALUES ($1, $2, $3, NOW())
-      ON CONFLICT (user_id, token) DO UPDATE
-      SET app_key = EXCLUDED.app_key, updated_at = NOW();
+      ON CONFLICT (token) DO UPDATE
+      SET user_id = EXCLUDED.user_id, app_key = EXCLUDED.app_key, updated_at = NOW();
     `,
     [userId, token, appKey]
   );
@@ -16,7 +16,7 @@ export async function registerPushToken(userId, token, appKey = "mobile") {
 
 export async function sendPushNotificationToUser(userId, { title, body, data } = {}) {
   const tokens = await pool.query(`SELECT token FROM push_tokens WHERE user_id = $1`, [userId]);
-  if (tokens.rowCount === 0) return;
+  if (tokens.rowCount === 0) return false;
 
   const messages = tokens.rows.map((row) => ({
     to: row.token,
@@ -27,14 +27,17 @@ export async function sendPushNotificationToUser(userId, { title, body, data } =
   }));
 
   try {
-    await fetch(EXPO_PUSH_URL, {
+    const response = await fetch(EXPO_PUSH_URL, {
       method: "POST",
       signal: AbortSignal.timeout(10000),
       headers: { "Content-Type": "application/json", Accept: "application/json" },
       body: JSON.stringify(messages),
     });
+    if (!response.ok) return false;
+    const result = await response.json();
+    return Array.isArray(result.data) && result.data.length > 0 && result.data.every(ticket => ticket.status === "ok");
   } catch {
-    // best-effort: une notification manquee ne doit jamais faire echouer l'action metier
+    return false;
   }
 }
 

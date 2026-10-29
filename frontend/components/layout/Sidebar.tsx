@@ -1,5 +1,7 @@
 "use client";
 
+import {useEffect} from "react";
+import {apiFetch} from "@/lib/api-client";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
@@ -52,7 +54,12 @@ const ICONS: Record<string, LucideIcon> = {
 export function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
-  const { user, logout } = useAuthStore();
+  const { user, token, updateUser, logout } = useAuthStore();
+  useEffect(()=>{
+    let active=true;
+    const load=()=>{if(token)apiFetch<{coordinateAll:boolean;coordinateBaseIds:string[]}>("/incidents/access/mine",{token}).then(a=>{if(active)updateUser({incidentCoordination:a.coordinateAll||a.coordinateBaseIds.length>0});}).catch(()=>{if(active)updateUser({incidentCoordination:false});});};
+    load();const timer=setInterval(load,30000);return()=>{active=false;clearInterval(timer);};
+  },[token,updateUser]);
   const navItems = getNavItems(user);
   const roleChip = getRoleChipLabel(user);
 

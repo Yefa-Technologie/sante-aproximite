@@ -22,13 +22,13 @@ export function createEmergencyRouter({ auth = requireAuth } = {}) {
 
   // Signaler une urgence et consulter son propre suivi sont ouverts aux comptes connectés.
   router.post("/", auth, safe(createEmergencyReport));
-  router.get("/", auth, requireRole(EMERGENCY_ROLES), safe(getEmergencyReports));
+  router.get("/", auth, safe(getEmergencyReports));
   router.get("/mine", auth, safe(getMyEmergencyReports));
   router.put("/location", auth, safe(saveEmergencyLocation));
   router.delete("/location", auth, safe(removeEmergencyLocation));
   router.get("/local-alerts", auth, safe(getLocalEmergencyAlerts));
-  router.post("/:id/acknowledge", auth, requireRole(EMERGENCY_ROLES), safe(acknowledgeEmergencyReport));
-  router.patch("/:id/progress", auth, requireRole(EMERGENCY_ROLES), safe(updateEmergencyProgress));
+  router.post("/:id/acknowledge", auth, safe(acknowledgeEmergencyReport));
+  router.patch("/:id/progress", auth, safe(updateEmergencyProgress));
   router.post("/bases", auth, requireRole(["NATIONAL","REGULATOR"]), safe(createEmergencyBase));
   router.get("/bases", auth, requireRole(EMERGENCY_ROLES), safe(getEmergencyBases));
   router.get("/bases/nearby", auth, safe(getNearbyEmergencyBases));

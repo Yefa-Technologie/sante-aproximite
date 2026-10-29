@@ -241,6 +241,7 @@ export async function syncPendingRequests() {
   const remaining = [];
 
   for (const item of queue) {
+    if (/^\/(emergency-reports|security-alerts)(\/|$)/.test(item.path)) continue;
     try {
       await requestApi(item.path, {
         token: item.token || undefined,
@@ -262,6 +263,7 @@ export async function syncPendingRequests() {
 
 export async function apiFetch(path, { token, method = "GET", body, timeoutMs = 15000, queueOffline = true, cache = true } = {}) {
   const normalizedMethod = String(method || "GET").toUpperCase();
+  if (/^\/(emergency-reports|security-alerts|incidents)(\/|$)/.test(path)) { queueOffline=false; cache=false; }
   const persistedToken = token ? await AsyncStorage.getItem(TOKEN_KEY) : "";
   const effectiveToken = persistedToken || token;
 

@@ -1,3 +1,4 @@
+import incidentRoutes from "./routes/incidentRoutes.js";
 import express from "express";
 import assistantRoutes from "./routes/assistantRoutes.js";
 import serviceBaseRoutes from "./routes/serviceBaseRoutes.js";
@@ -47,6 +48,7 @@ app.use("/api/suggestions", suggestionRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/emergency-reports", emergencyRoutes);
 app.use("/api/service-bases", serviceBaseRoutes);
+app.use("/api/incidents", incidentRoutes);
 app.use("/api/geo", geoRoutes);
 app.use("/api/security-alerts", securityAlertRoutes);
 app.use("/api/contact", contactRoutes);

@@ -2,6 +2,8 @@ import * as Device from "expo-device";
 import Constants from "expo-constants";
 import { Platform } from "react-native";
 import { apiFetch } from "./api/client";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+const DEVICE_PUSH_KEY="sante_device_push_token";
 
 // Les notifications push distantes ne sont plus supportees dans Expo Go depuis le SDK 53
 // (necessite un development build). Le simple fait d'importer expo-notifications declenche
@@ -60,8 +62,15 @@ export async function registerForPushNotifications(token) {
     const pushToken = await Notifications.getExpoPushTokenAsync({ projectId });
     if (!pushToken?.data) return;
 
-    await apiFetch("/push-tokens", { token, method: "POST", body: { token: pushToken.data, appKey: "mobile" } });
+    await apiFetch("/push-tokens", { token, method: "POST", queueOffline:false, body: { token: pushToken.data, appKey: "mobile" } });
+    await AsyncStorage.setItem(DEVICE_PUSH_KEY,pushToken.data);
   } catch {
     // notifications non critiques : on ignore silencieusement toute erreur
   }
+}
+export async function unregisterDeviceNotifications(token) {
+  const deviceToken=await AsyncStorage.getItem(DEVICE_PUSH_KEY);
+  if(!isExpoGo){try{await require("expo-notifications").dismissAllNotificationsAsync();}catch{}}
+  if(token&&deviceToken)await apiFetch("/push-tokens",{token,method:"DELETE",body:{token:deviceToken},queueOffline:false,timeoutMs:3000}).catch(()=>{});
+  await AsyncStorage.removeItem(DEVICE_PUSH_KEY);
 }

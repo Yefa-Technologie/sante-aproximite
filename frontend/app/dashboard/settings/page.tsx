@@ -1,4 +1,5 @@
 "use client";
+import { IncidentConfiguration } from "@/components/settings/IncidentConfiguration";
 
 import { ServiceBasesTab, ServiceBase, SERVICE_ROLES } from "@/components/settings/ServiceBasesTab";
 import { Fragment, useEffect, useState } from "react";
@@ -117,7 +118,7 @@ export default function SettingsPage() {
         ))}
       </div>
 
-      {tab === "bases" && canManageBases ? <ServiceBasesTab token={token} /> : null}
+      {tab === "bases" && canManageBases ? <><ServiceBasesTab token={token} /><IncidentConfiguration token={token}/></> : null}
       {tab === "users" ? <UsersTab token={token} /> : null}
       {tab === "centers" && regulator ? <AllCentersTab token={token} /> : null}
       {tab === "pending-centers" && regulator ? <PendingCentersTab token={token} /> : null}

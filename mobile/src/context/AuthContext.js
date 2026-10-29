@@ -1,4 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { unregisterDeviceNotifications } from "../notifications";
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { AppState } from "react-native";
 import { apiFetch, subscribeSession } from "../api/client";
@@ -84,6 +85,7 @@ export function AuthProvider({ children }) {
   };
 
   const logout = async () => {
+    await unregisterDeviceNotifications(token).catch(()=>{});
     setToken("");
     setRefreshToken("");
     setUser(null);
