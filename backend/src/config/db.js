@@ -1096,6 +1096,22 @@ export async function connectDb() {
     );
     CREATE INDEX IF NOT EXISTS idx_emergency_local_active ON emergency_reports(created_at)
       WHERE status IN ('NEW','ACKNOWLEDGED','EN_ROUTE','ON_SITE');`);
+  await pool.query(`
+    ALTER TABLE emergency_bases ADD COLUMN IF NOT EXISTS city TEXT NOT NULL DEFAULT '';
+    ALTER TABLE emergency_bases ADD COLUMN IF NOT EXISTS city_key TEXT NOT NULL DEFAULT '';
+    ALTER TABLE emergency_bases ADD COLUMN IF NOT EXISTS radius_km DOUBLE PRECISION NOT NULL DEFAULT 20 CHECK (radius_km BETWEEN 1 AND 200);
+    ALTER TABLE emergency_bases ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_base_service ON emergency_bases(id,service_type);
+    CREATE TABLE IF NOT EXISTS user_service_bases (
+      user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      service_type TEXT NOT NULL CHECK (service_type IN ('SAMU','SAPEUR_POMPIER','POLICE','GENDARMERIE','PROTECTION_CIVILE')),
+      base_id BIGINT NOT NULL,
+      PRIMARY KEY(user_id,service_type),
+      FOREIGN KEY(base_id,service_type) REFERENCES emergency_bases(id,service_type) ON DELETE RESTRICT
+    );
+    ALTER TABLE security_alerts ADD COLUMN IF NOT EXISTS city TEXT NOT NULL DEFAULT '';
+    ALTER TABLE security_alerts ADD COLUMN IF NOT EXISTS city_key TEXT NOT NULL DEFAULT '';
+  `);
   console.log("PostgreSQL connected");
 }
 

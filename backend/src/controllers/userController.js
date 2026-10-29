@@ -1,3 +1,4 @@
+import { resolveServiceBases, saveServiceBases, SERVICE_ROLES, rolesOf, canManageBases, canManageServiceAccount } from "../services/serviceBaseService.js";
 import bcrypt from "bcryptjs";
 import { pool } from "../config/db.js";
 
@@ -72,6 +73,7 @@ function mapUser(row) {
     email: row.email,
     role: row.role,
     roles,
+    serviceBases: row.service_bases || {},
     isActive: row.is_active !== false,
     establishmentCode: row.establishment_code,
     regionCode: row.region_code || null,
@@ -225,16 +227,15 @@ export async function listUsers(req, res) {
   const whereParts = [];
   const params = [];
 
-  // Rôles que NATIONAL peut gérer : uniquement les comptes du système de santé
-  // (pas SAMU opérationnel, pas Police, Gendarmerie - chaînes de commandement distinctes)
+  // L’administration nationale gère aussi les comptes des bases de secours et sécurité.
   const NATIONAL_HEALTH_ROLES = [
-    "NATIONAL","REGULATOR","REGION","DISTRICT","ETABLISSEMENT","CHEF_ETABLISSEMENT","USER"
+    "NATIONAL","REGULATOR","REGION","DISTRICT","ETABLISSEMENT","CHEF_ETABLISSEMENT","USER",...SERVICE_ROLES
   ];
 
   if (effectiveRole === "DEVELOPER") {
     // DEVELOPER voit tous les comptes sans restriction de périmètre
   } else if (effectiveRole === "NATIONAL") {
-    // NATIONAL voit uniquement les comptes du système de santé
+    // NATIONAL voit les comptes sanitaires, de secours et de sécurité.
     whereParts.push(`u.role = ANY($${params.length + 1}::text[])`);
     params.push(NATIONAL_HEALTH_ROLES);
   } else if (effectiveRole === "REGULATOR") {
@@ -292,7 +293,7 @@ export async function listUsers(req, res) {
       etablissementScopedParts.push(`u.role = 'USER'`);
     }
     whereParts.push(`(${etablissementScopedParts.join(" OR ")})`);
-  } else if (effectiveRole === "SAMU" || effectiveRole === "SAPEUR_POMPIER") {
+  } else if (SERVICE_ROLES.includes(effectiveRole)) {
     // Voit les comptes de son propre service dans sa région
     const regionCode = req.user?.regionCode || null;
     const emergencyScopedParts = [];
@@ -319,6 +320,7 @@ export async function listUsers(req, res) {
         u.id, u.full_name, u.email, u.role, u.is_active, u.created_at,
         u.establishment_code, u.region_code, u.district_code, u.center_id, u.approval_status,
         hc.name AS center_name,
+        (SELECT jsonb_object_agg(usb.service_type,usb.base_id::text) FROM user_service_bases usb WHERE usb.user_id=u.id) AS service_bases,
         COALESCE(
           (
             SELECT array_agg(ur.role ORDER BY ur.role)
@@ -341,13 +343,14 @@ export async function listUsers(req, res) {
 // Rôles qu'un niveau peut créer (hiérarchie descendante uniquement)
 const CREATABLE_ROLES_BY_LEVEL = {
   DEVELOPER:         null,
-  // NATIONAL gère uniquement le système de santé - pas les services d'urgence/sécurité
-  NATIONAL:          ["NATIONAL","REGULATOR","REGION","DISTRICT","ETABLISSEMENT","CHEF_ETABLISSEMENT","USER"],
-  REGULATOR:         ["REGULATOR","REGION","DISTRICT","ETABLISSEMENT","CHEF_ETABLISSEMENT","SAMU","SAPEUR_POMPIER","USER"],
+  // Administration centrale : comptes sanitaires, de secours et de sécurité.
+  NATIONAL:          [...SERVICE_ROLES,"NATIONAL","REGULATOR","REGION","DISTRICT","ETABLISSEMENT","CHEF_ETABLISSEMENT","USER"],
+  REGULATOR:         [...SERVICE_ROLES,"REGULATOR","REGION","DISTRICT","ETABLISSEMENT","CHEF_ETABLISSEMENT","SAMU","SAPEUR_POMPIER","USER"],
   REGION:            ["DISTRICT","ETABLISSEMENT","CHEF_ETABLISSEMENT","SAMU","SAPEUR_POMPIER"],
   DISTRICT:          ["ETABLISSEMENT","CHEF_ETABLISSEMENT","SAMU","SAPEUR_POMPIER"],
   ETABLISSEMENT:     ["ETABLISSEMENT","CHEF_ETABLISSEMENT"],
   CHEF_ETABLISSEMENT:["ETABLISSEMENT","CHEF_ETABLISSEMENT"],
+  POLICE: ["POLICE"], GENDARMERIE: ["GENDARMERIE"], PROTECTION_CIVILE: ["PROTECTION_CIVILE"],
   SAMU:              ["SAMU"],
   SAPEUR_POMPIER:    ["SAPEUR_POMPIER"],
 };
@@ -375,7 +378,8 @@ export async function createUser(req, res) {
   const ROLE_PRIORITY = ["DEVELOPER","NATIONAL","REGULATOR","REGION","DISTRICT","ETABLISSEMENT","CHEF_ETABLISSEMENT","SAMU","SAPEUR_POMPIER"];
   const creatorLevel = ROLE_PRIORITY.find((r) => creatorRoles.includes(r)) || creatorRoles[0];
   const allowedToCreate = CREATABLE_ROLES_BY_LEVEL[creatorLevel];
-  if (allowedToCreate !== null && allowedToCreate !== undefined) {
+  if (allowedToCreate === undefined) return res.status(403).json({message:"Création de compte non autorisée."});
+  if (allowedToCreate !== null) {
     const forbidden = normalizedRoles.find(
       (r) => PRIMARY_ROLES.includes(r) && !allowedToCreate.includes(r)
     );
@@ -446,6 +450,9 @@ export async function createUser(req, res) {
       ]
     );
     const user = created.rows[0];
+    const serviceBases = await resolveServiceBases(client, req.user, normalizedRoles, req.body);
+    await saveServiceBases(client, user.id, serviceBases);
+    user.service_bases = serviceBases;
     await saveUserRoles(client, user.id, normalizedRoles);
     await client.query("COMMIT");
     user.roles = normalizedRoles;
@@ -461,6 +468,7 @@ export async function createUser(req, res) {
 
 export async function updateUser(req, res) {
   const userId = Number(req.params.id);
+  if (!await canManageServiceAccount(req.user,userId)) return res.status(403).json({message:"Ce compte n’appartient pas à votre base et service."});
   if (!Number.isInteger(userId) || userId <= 0) {
     return res.status(400).json({ message: "ID utilisateur invalide" });
   }
@@ -503,9 +511,18 @@ export async function updateUser(req, res) {
     return res.status(403).json({ message: "Les rôles d'un compte Developer sont verrouillés et ne peuvent pas être modifiés." });
   }
 
-  const normalizedRoles = normalizeRolesInput(roles, role || current.role);
+  const normalizedRoles = normalizeRolesInput(roles ?? (role ? undefined : currentTargetRoles.length ? currentTargetRoles : [current.role]), role || current.role);
+  if (!canManageBases(req.user) && [...currentTargetRoles, current.role, ...normalizedRoles].some(r => SERVICE_ROLES.includes(r))) {
+    const actorRoles = rolesOf(req.user);
+    if ([...currentTargetRoles, current.role, ...normalizedRoles].some(r => !actorRoles.includes(r))) return res.status(403).json({ message: "Modification réservée au même service ou à l’administration." });
+    const own = await pool.query(`SELECT 1 FROM user_service_bases target JOIN user_service_bases actor
+      ON actor.base_id=target.base_id AND actor.service_type=target.service_type WHERE target.user_id=$1 AND actor.user_id=$2`, [userId, Number(req.user.id)]);
+    if (!own.rows.length) return res.status(403).json({ message: "Ce compte n’appartient pas à votre base." });
+  }
   const primaryRole = extractPrimaryRole(normalizedRoles, role || current.role);
-  const requesterRole = String(req.user?.role || "").toUpperCase();
+  const requesterRole = Object.keys(CREATABLE_ROLES_BY_LEVEL).find(r=>rolesOf(req.user).includes(r)) || String(req.user?.role || "").toUpperCase();
+  const allowed=CREATABLE_ROLES_BY_LEVEL[requesterRole];
+  if (allowed !== null && (!allowed || normalizedRoles.some(r=>PRIMARY_ROLES.includes(r)&&!allowed.includes(r)))) return res.status(403).json({message:"Vous ne pouvez pas attribuer ces rôles."});
   if (normalizedRoles.includes("DEVELOPER") && requesterRole !== "DEVELOPER") {
     return res.status(403).json({ message: "Seul un compte Developer peut attribuer le rôle Developer." });
   }
@@ -611,9 +628,12 @@ export async function updateUser(req, res) {
       ]
     );
 
+    const serviceBases = await resolveServiceBases(client, req.user, normalizedRoles, req.body, userId);
+    await saveServiceBases(client, userId, serviceBases);
     await saveUserRoles(client, userId, normalizedRoles);
     await client.query("COMMIT");
     const user = updated.rows[0];
+    user.service_bases = serviceBases;
     user.roles = normalizedRoles;
     user.center_name = assignment.centerName;
     return res.json(mapUser(user));
@@ -627,6 +647,7 @@ export async function updateUser(req, res) {
 
 export async function setUserActiveStatus(req, res) {
   const userId = Number(req.params.id);
+  if (!await canManageServiceAccount(req.user,userId)) return res.status(403).json({message:"Ce compte n’appartient pas à votre base et service."});
   if (!Number.isInteger(userId) || userId <= 0) {
     return res.status(400).json({ message: "ID utilisateur invalide" });
   }
@@ -655,6 +676,7 @@ export async function setUserActiveStatus(req, res) {
 
 export async function deleteUser(req, res) {
   const userId = Number(req.params.id);
+  if (!await canManageServiceAccount(req.user,userId)) return res.status(403).json({message:"Ce compte n’appartient pas à votre base et service."});
   if (!Number.isInteger(userId) || userId <= 0) {
     return res.status(400).json({ message: "ID utilisateur invalide" });
   }

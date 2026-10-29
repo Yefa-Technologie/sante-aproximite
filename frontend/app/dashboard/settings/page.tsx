@@ -1,5 +1,6 @@
 "use client";
 
+import { ServiceBasesTab, ServiceBase, SERVICE_ROLES } from "@/components/settings/ServiceBasesTab";
 import { Fragment, useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api-client";
 import { useAuthStore } from "@/lib/auth-store";
@@ -20,6 +21,7 @@ type User = {
   email: string;
   role: string;
   roles?: string[];
+  serviceBases?: Record<string,string>;
   approvalStatus?: string;
   isActive?: boolean;
   establishmentCode?: string | null;
@@ -89,7 +91,8 @@ function matchesUserCategory(u: User, category: string): boolean {
 export default function SettingsPage() {
   const { user, token } = useAuthStore();
   const regulator = isRegulator(user);
-  const [tab, setTab] = useState<"users" | "centers" | "pending-centers" | "app">("users");
+  const canManageBases = [...(user?.roles || []), user?.role].some(r => ["DEVELOPER","NATIONAL","REGULATOR"].includes(String(r)));
+  const [tab, setTab] = useState<"bases" | "users" | "centers" | "pending-centers" | "app">("users");
 
   return (
     <div className="flex flex-col gap-4">
@@ -97,6 +100,7 @@ export default function SettingsPage() {
       <div className="flex flex-wrap gap-2">
         {[
           ["users", "Utilisateurs"],
+          ...(canManageBases ? [["bases", "Bases de secours et sécurité"]] : []),
           ...(regulator ? [["centers", "Centres de sante"]] : []),
           ...(regulator ? [["pending-centers", "Centres en attente"]] : []),
           ["app", "Application & modules"],
@@ -113,6 +117,7 @@ export default function SettingsPage() {
         ))}
       </div>
 
+      {tab === "bases" && canManageBases ? <ServiceBasesTab token={token} /> : null}
       {tab === "users" ? <UsersTab token={token} /> : null}
       {tab === "centers" && regulator ? <AllCentersTab token={token} /> : null}
       {tab === "pending-centers" && regulator ? <PendingCentersTab token={token} /> : null}
@@ -123,17 +128,19 @@ export default function SettingsPage() {
 
 function UsersTab({ token }: { token: string }) {
   const [users, setUsers] = useState<User[]>([]);
+  const [bases,setBases] = useState<ServiceBase[]>([]);
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("ALL");
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
-  const [form, setForm] = useState({ fullName: "", email: "", password: "", role: "USER", establishmentCode: "" });
+  const [form, setForm] = useState({ fullName: "", email: "", password: "", role: "USER", establishmentCode: "", baseId: "" });
   const [editingId, setEditingId] = useState("");
 
   async function load() {
     setError("");
     try {
-      setUsers(await apiFetch<User[]>("/users", { token }));
+      const [accounts,serviceBases] = await Promise.all([apiFetch<User[]>("/users", {token}),apiFetch<ServiceBase[]>("/service-bases", {token})]);
+      setUsers(accounts); setBases(serviceBases);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erreur");
     }
@@ -157,7 +164,7 @@ function UsersTab({ token }: { token: string }) {
 
   function resetForm() {
     setEditingId("");
-    setForm({ fullName: "", email: "", password: "", role: "USER", establishmentCode: "" });
+    setForm({ fullName: "", email: "", password: "", role: "USER", establishmentCode: "", baseId: "" });
   }
 
   async function submit(e: React.FormEvent) {
@@ -165,8 +172,11 @@ function UsersTab({ token }: { token: string }) {
     setError("");
     setSuccess("");
     try {
+      const editingUser=users.find(u=>u.id===editingId);
+      const keepRoles=editingUser?.role===form.role;
       const payload: Record<string, unknown> = {
-        fullName: form.fullName, email: form.email, role: form.role, roles: [form.role],
+        fullName: form.fullName, email: form.email, role: form.role, roles: keepRoles ? editingUser.roles || [form.role] : [form.role],
+        serviceBases: {...(keepRoles ? editingUser?.serviceBases : {}), ...(SERVICE_ROLES.includes(form.role) ? {[form.role]:form.baseId} : {})},
         establishmentCode: form.establishmentCode || null,
       };
       if (form.password.trim()) payload.password = form.password;
@@ -186,7 +196,7 @@ function UsersTab({ token }: { token: string }) {
 
   function edit(u: User) {
     setEditingId(u.id);
-    setForm({ fullName: u.fullName, email: u.email, password: "", role: u.role, establishmentCode: u.establishmentCode || "" });
+    setForm({ fullName: u.fullName, email: u.email, password: "", role: u.role, establishmentCode: u.establishmentCode || "", baseId: u.serviceBases?.[u.role] || "" });
   }
 
   async function reviewChef(id: string, action: "APPROVE" | "REJECT") {
@@ -220,12 +230,19 @@ function UsersTab({ token }: { token: string }) {
         <Input required placeholder="Nom complet" value={form.fullName} onChange={(e) => setForm((p) => ({ ...p, fullName: e.target.value }))} />
         <Input required type="email" placeholder="Email" value={form.email} onChange={(e) => setForm((p) => ({ ...p, email: e.target.value }))} />
         <Input type="password" placeholder={editingId ? "Nouveau mot de passe (optionnel)" : "Mot de passe"} required={!editingId} value={form.password} onChange={(e) => setForm((p) => ({ ...p, password: e.target.value }))} />
-        <Select value={form.role} onChange={(e) => setForm((p) => ({ ...p, role: e.target.value }))}>
+        <Select value={form.role} onChange={(e) => setForm((p) => ({ ...p, role: e.target.value, baseId: "" }))}>
           {ROLE_OPTIONS.map((r) => <option key={r} value={r}>{r}</option>)}
         </Select>
         <div className="flex gap-2">
           <Input placeholder="Code etablissement" value={form.establishmentCode} onChange={(e) => setForm((p) => ({ ...p, establishmentCode: e.target.value }))} />
         </div>
+        {SERVICE_ROLES.includes(form.role) ? <label className="col-span-full flex flex-col gap-1 text-sm">Base {form.role.replaceAll("_"," ")} obligatoire
+          <Select required value={form.baseId} onChange={e=>setForm(p=>({...p,baseId:e.target.value}))}>
+            <option value="">Choisir une base du même service</option>
+            {bases.filter(b=>b.isActive && b.serviceType===form.role).map(b=><option key={b.id} value={b.id}>{b.name} · {b.city}</option>)}
+          </Select>
+          {!bases.some(b=>b.isActive && b.serviceType===form.role)?<span className="text-amber-700">Créez d’abord une base de ce service dans l’onglet Bases de secours et sécurité.</span>:null}
+        </label>:null}
         <div className="col-span-full flex gap-2">
           {editingId ? <Button type="button" variant="outline" onClick={resetForm}>Annuler</Button> : null}
           <Button type="submit">{editingId ? "Mettre a jour" : "Creer l'utilisateur"}</Button>
@@ -266,7 +283,7 @@ function UsersTab({ token }: { token: string }) {
               <tr key={u.id} className="border-b border-slate-50">
                 <td className="p-3 font-semibold text-slate-800">{u.fullName}</td>
                 <td className="p-3 text-slate-500">{u.email}</td>
-                <td className="p-3"><Badge>{u.role}</Badge></td>
+                <td className="p-3"><Badge>{u.role}</Badge>{Object.entries(u.serviceBases || {}).map(([service,id])=><div key={service} className="text-xs text-slate-500">{service} : {bases.find(b=>b.id===String(id))?.name || `Base ${id}`}</div>)}{SERVICE_ROLES.includes(u.role)&&!u.serviceBases?.[u.role]?<div className="text-xs text-amber-700">Base à affecter</div>:null}</td>
                 <td className="p-3">
                   {isPublicAccount(u) ? <Badge variant="slate">Public</Badge> : <Badge variant="blue">Professionnel</Badge>}
                 </td>

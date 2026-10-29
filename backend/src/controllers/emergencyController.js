@@ -1,10 +1,10 @@
+import { baseScopeSql, serviceRoles, MEDICAL_ROLES, writeServiceBase } from "../services/serviceBaseService.js";
 import { pool } from "../config/db.js";
 import { cityKey, notifyLocalEmergency } from "../services/localEmergencyService.js";
 
 const TARGET_SERVICE_MAP = {
   SAMU: "SAMU",
   SAPEUR_POMPIER: "SAPEUR_POMPIER",
-  SAPEUR_POMPIER: "SAPEUR_POMPIER",  // ancienne orthographe (double P)
   POMPIER: "SAPEUR_POMPIER",
   POMPIERS: "SAPEUR_POMPIER",
   POLICE: "POLICE",
@@ -13,35 +13,6 @@ const TARGET_SERVICE_MAP = {
 };
 
 const BASE_STATUS_VALUES = ["NEW", "ACKNOWLEDGED", "EN_ROUTE", "ON_SITE", "COMPLETED", "CLOSED"];
-
-const EMERGENCY_ALLOWED_ROLES = new Set([
-  "DEVELOPER",
-  "SAMU",
-  "SAPEUR_POMPIER",
-  "SAPEUR_POMPIER",  // ancienne orthographe DB (double P)
-  "POLICE",
-  "GENDARMERIE",
-  "PROTECTION_CIVILE",
-  "REGULATOR",
-  "NATIONAL",
-  "REGION",
-  "DISTRICT"
-]);
-
-function serviceFromRole(role) {
-  if (role === "SAMU") return "SAMU";
-  if (role === "SAPEUR_POMPIER" || role === "SAPEUR_POMPIER") return "SAPEUR_POMPIER";
-  if (role === "POLICE") return "POLICE";
-  if (role === "GENDARMERIE") return "GENDARMERIE";
-  if (role === "PROTECTION_CIVILE") return "PROTECTION_CIVILE";
-  return null;
-}
-
-// Retourne toutes les variantes acceptees pour un service (compatibilite ancienne BD)
-function serviceVariants(service) {
-  if (service === "SAPEUR_POMPIER") return ["SAPEUR_POMPIER", "SAPEUR_POMPIER"];
-  return [service];
-}
 
 function normalizeTargetService(raw) {
   const value = String(raw || "").trim().toUpperCase();
@@ -242,7 +213,7 @@ export async function createEmergencyReport(req, res) {
   const latitude = parseLatitude(req.body?.latitude);
   const longitude = parseLongitude(req.body?.longitude);
 
-  if (!targetService) {
+  if (!MEDICAL_ROLES.includes(targetService)) {
     return res.status(400).json({ message: "Service d'urgence invalide (SAMU ou SAPEUR_POMPIER)." });
   }
   if (phoneNumber.length !== 10) {
@@ -300,20 +271,12 @@ export async function createEmergencyReport(req, res) {
 }
 
 export async function getEmergencyReports(req, res) {
-  if (!EMERGENCY_ALLOWED_ROLES.has(req.user?.role)) {
+  if (!serviceRoles(req.user, MEDICAL_ROLES).length) {
     return res.status(403).json({ message: "Acces refuse" });
   }
 
-  const role = String(req.user.role || "").toUpperCase();
-  const roleService = serviceFromRole(role);
-  const whereParts = [];
   const params = [];
-
-  // Chaque service ne voit que ses propres alertes
-  if (roleService) {
-    whereParts.push(`er.target_service = ANY($${params.length + 1}::text[])`);
-    params.push(serviceVariants(roleService));
-  }
+  const whereParts = [baseScopeSql("er", req.user, params, MEDICAL_ROLES)];
   const status = normalizeEmergencyStatus(req.query?.status);
   if (status) {
     whereParts.push(`er.status = $${params.length + 1}`);
@@ -347,7 +310,7 @@ export async function getEmergencyReports(req, res) {
       LEFT JOIN LATERAL (
         SELECT eb.name, eb.latitude, eb.longitude
         FROM emergency_bases eb
-        WHERE eb.created_by = er.handled_by
+        WHERE eb.id IN (SELECT base_id FROM user_service_bases WHERE user_id=er.handled_by AND service_type=er.target_service)
           AND eb.service_type = er.target_service
           AND eb.approval_status = 'APPROVED'
         ORDER BY
@@ -395,7 +358,7 @@ export async function getMyEmergencyReports(req, res) {
       LEFT JOIN LATERAL (
         SELECT eb.name, eb.latitude, eb.longitude
         FROM emergency_bases eb
-        WHERE eb.created_by = er.handled_by
+        WHERE eb.id IN (SELECT base_id FROM user_service_bases WHERE user_id=er.handled_by AND service_type=er.target_service)
           AND eb.service_type = er.target_service
           AND eb.approval_status = 'APPROVED'
         ORDER BY
@@ -426,8 +389,8 @@ export async function acknowledgeEmergencyReport(req, res) {
     return res.status(400).json({ message: "ID alerte invalide" });
   }
 
-  const roleService = serviceFromRole(String(req.user.role || "").toUpperCase());
-  if (!roleService && String(req.user.role || "").toUpperCase() !== "DEVELOPER") {
+  const services = serviceRoles(req.user, MEDICAL_ROLES);
+  if (!services.length) {
     return res.status(403).json({ message: "Seuls SAMU et SAPEUR_POMPIER peuvent prendre en charge." });
   }
   const teamLatitude = req.body?.teamLatitude == null ? null : parseLatitude(req.body?.teamLatitude);
@@ -436,6 +399,8 @@ export async function acknowledgeEmergencyReport(req, res) {
     return res.status(400).json({ message: "Fournissez teamLatitude et teamLongitude ensemble." });
   }
 
+  const params = [reportId, services, Number(req.user.id), teamLatitude, teamLongitude];
+  const scope = baseScopeSql("emergency_reports", req.user, params, MEDICAL_ROLES);
   const updated = await pool.query(
     `
       UPDATE emergency_reports
@@ -446,10 +411,11 @@ export async function acknowledgeEmergencyReport(req, res) {
         team_latitude = COALESCE($4, team_latitude),
         team_longitude = COALESCE($5, team_longitude)
       WHERE id = $1
-        AND ($2::text[] IS NULL OR target_service = ANY($2::text[]))
+        AND target_service = ANY($2::text[]) AND ${scope}
+        AND (handled_by IS NULL OR handled_by=$3)
       RETURNING *;
     `,
-    [reportId, roleService ? serviceVariants(roleService) : null, Number(req.user.id), teamLatitude, teamLongitude]
+    params
   );
 
   if (updated.rowCount === 0) {
@@ -468,8 +434,8 @@ export async function updateEmergencyProgress(req, res) {
     return res.status(400).json({ message: "ID alerte invalide" });
   }
 
-  const roleService = serviceFromRole(String(req.user.role || "").toUpperCase());
-  if (!roleService && String(req.user.role || "").toUpperCase() !== "DEVELOPER") {
+  const services = serviceRoles(req.user, MEDICAL_ROLES);
+  if (!services.length) {
     return res.status(403).json({ message: "Seuls SAMU et SAPEUR_POMPIER peuvent mettre a jour une alerte." });
   }
 
@@ -485,6 +451,8 @@ export async function updateEmergencyProgress(req, res) {
     return res.status(400).json({ message: "Fournissez teamLatitude et teamLongitude ensemble." });
   }
 
+  const params = [reportId, services, Number(req.user.id), status, teamLatitude, teamLongitude, teamNote];
+  const scope = baseScopeSql("emergency_reports", req.user, params, MEDICAL_ROLES);
   const updated = await pool.query(
     `
       UPDATE emergency_reports
@@ -496,11 +464,11 @@ export async function updateEmergencyProgress(req, res) {
         team_longitude = COALESCE($6, team_longitude),
         team_note = CASE WHEN $7 = '' THEN team_note ELSE $7 END
       WHERE id = $1
-        AND ($2::text[] IS NULL OR target_service = ANY($2::text[]))
+        AND target_service = ANY($2::text[]) AND ${scope}
         AND (handled_by IS NULL OR handled_by = $3)
       RETURNING *;
     `,
-    [reportId, roleService ? serviceVariants(roleService) : null, Number(req.user.id), status, teamLatitude, teamLongitude, teamNote]
+    params
   );
 
   if (updated.rowCount === 0) {
@@ -513,53 +481,14 @@ export async function updateEmergencyProgress(req, res) {
   });
 }
 
-export async function createEmergencyBase(req, res) {
-  const role = String(req.user.role || "").toUpperCase();
-  const roleService = serviceFromRole(role);
-  const requestedService = normalizeTargetService(req.body?.serviceType);
-  const name = normalizeText(req.body?.name, 160);
-  const address = normalizeText(req.body?.address, 320);
-  const latitude = parseLatitude(req.body?.latitude);
-  const longitude = parseLongitude(req.body?.longitude);
-
-  if (!roleService && !["DEVELOPER", "REGULATOR", "NATIONAL", "REGION", "DISTRICT"].includes(role)) {
-    return res.status(403).json({ message: "Acces refuse" });
-  }
-
-  const serviceType = roleService || requestedService;
-  if (!serviceType) {
-    return res.status(400).json({ message: "serviceType invalide (SAMU ou SAPEUR_POMPIER)." });
-  }
-  if (!name || !address || latitude == null || longitude == null) {
-    return res.status(400).json({ message: "name, address, latitude et longitude sont obligatoires." });
-  }
-
-  const inserted = await pool.query(
-    `
-      INSERT INTO emergency_bases (
-        name,
-        service_type,
-        address,
-        latitude,
-        longitude,
-        created_by,
-        approval_status,
-        updated_at
-      )
-      VALUES ($1, $2, $3, $4, $5, $6, 'APPROVED', NOW())
-      RETURNING *;
-    `,
-    [name, serviceType, address, latitude, longitude, Number(req.user.id)]
-  );
-
-  return res.status(201).json(normalizeBaseRow(inserted.rows[0]));
-}
+export async function createEmergencyBase(req, res) { return writeServiceBase(req, res); }
 
 export async function getEmergencyBases(req, res) {
   const requestedService = normalizeTargetService(req.query?.serviceType);
   const where = [];
   const params = [];
 
+  where.push(`eb.is_active=TRUE`);
   where.push(`eb.approval_status = 'APPROVED'`);
   if (requestedService) {
     where.push(`eb.service_type = $${params.length + 1}`);

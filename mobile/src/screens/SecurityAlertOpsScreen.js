@@ -44,7 +44,7 @@ export function SecurityAlertOpsScreen() {
   async function loadAlerts({ silent = false } = {}) {
     if (!silent) setLoading(true);
     try {
-      const data = await apiFetch("/security-alerts", { token });
+      const data = await apiFetch("/security-alerts", { token, cache: false, queueOffline: false });
       setAlerts(Array.isArray(data) ? data : []);
     } catch (err) {
       if (!silent) setError(err.message);
@@ -66,7 +66,7 @@ export function SecurityAlertOpsScreen() {
     setError("");
     try {
       await apiFetch(`/security-alerts/${alert.id}`, {
-        token, method: "PATCH",
+        token, method: "PATCH", queueOffline: false,
         body: { status: nextStatus }
       });
       await loadAlerts({ silent: true });

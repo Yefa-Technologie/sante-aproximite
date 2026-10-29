@@ -9,7 +9,7 @@ async function setup(t) {
   const original = pool.query;
   pool.query = async (sql, params) => {
     queries.push({sql,params});
-    return { rows: sql.includes('INSERT INTO emergency_reports') ? [{ id: 7, user_id: params[0], target_service: params[1], status: 'NEW' }] : [] };
+    return { rowCount: sql.includes('INSERT INTO emergency_reports') ? 1 : 0, rows: sql.includes('INSERT INTO emergency_reports') ? [{ id: 7, user_id: params[0], target_service: params[1], status: 'NEW' }] : [] };
   };
   t.after(()=>{pool.query=original;});
   const app=express(); app.use(express.json());
@@ -46,4 +46,19 @@ test('anonymous reports and history are rejected, while responders retain access
   assert.equal((await request('/mine','GET',undefined,'')).status,401);
   assert.equal((await request('/','GET',undefined,'SAMU')).status,200);
   assert.equal((await request('/','GET',undefined,'SAPEUR_POMPIER')).status,200);
+});
+
+test('developer-only accounts cannot bypass operational privacy',async t=>{
+  const {request,queries}=await setup(t);
+  for(const [path,method,body] of [['/','GET'],['/7/acknowledge','POST'],['/7/progress','PATCH',{status:'EN_ROUTE'}],['/local-alerts','GET']])assert.equal((await request(path,method,body,'DEVELOPER')).status,403);
+  assert.equal(queries.length,0);
+});
+
+test('listing and direct mutations share the assigned base scope',async t=>{
+  const {request,queries}=await setup(t);
+  await request('/?all=true','GET',undefined,'SAMU');
+  assert.equal((await request('/7/acknowledge','POST',{},'SAMU')).status,404);
+  assert.equal((await request('/7/progress','PATCH',{status:'EN_ROUTE'},'SAMU')).status,404);
+  assert.equal(queries.length,3);
+  for(const {sql} of queries){assert.match(sql,/user_service_bases/);assert.match(sql,/eb.is_active=TRUE/);assert.match(sql,/eb.radius_km/);}
 });

@@ -11,20 +11,21 @@ import {
 import { requireAuth, requireRole } from "../middlewares/authMiddleware.js";
 
 const router = Router();
+const safe = handler => (req,res,next) => Promise.resolve(handler(req,res,next)).catch(next);
 const ADMIN_ROLES = [
   "NATIONAL", "REGULATOR",
   "REGION", "DISTRICT",
   "ETABLISSEMENT", "CHEF_ETABLISSEMENT",
-  "SAMU", "SAPEUR_POMPIER"
+  "SAMU", "SAPEUR_POMPIER", "POLICE", "GENDARMERIE", "PROTECTION_CIVILE"
 ];
 
 router.use(requireAuth, requireRole(ADMIN_ROLES));
-router.get("/", listUsers);
-router.get("/pending-chefs", listPendingChefs);
-router.post("/:id/review", reviewChef);
-router.post("/", createUser);
-router.patch("/:id", updateUser);
-router.patch("/:id/active", setUserActiveStatus);
-router.delete("/:id", deleteUser);
+router.get("/", safe(listUsers));
+router.get("/pending-chefs", safe(listPendingChefs));
+router.post("/:id/review", safe(reviewChef));
+router.post("/", safe(createUser));
+router.patch("/:id", safe(updateUser));
+router.patch("/:id/active", safe(setUserActiveStatus));
+router.delete("/:id", safe(deleteUser));
 
 export default router;

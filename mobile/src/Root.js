@@ -147,8 +147,8 @@ export function Root() {
   const canSendSecurityAlert  = isModuleEnabled("security_alert");
   const canUseReferralModule = isModuleEnabled("referral");
   const canSeeChefSpace       = isModuleEnabled("chef");
-  const canSeeEmergencyAlerts = isModuleEnabled("alerts");
-  const canSeeSecurityOps     = isModuleEnabled("security_ops");
+  const canSeeEmergencyAlerts = hasAnyRole(["SAMU","SAPEUR_POMPIER"]) && isModuleEnabled("alerts");
+  const canSeeSecurityOps     = hasAnyRole(["POLICE","GENDARMERIE","PROTECTION_CIVILE"]) && isModuleEnabled("security_ops");
   const canSeeCenterSettings  = isModuleEnabled("settings");
   const canSeeDonation        = isModuleEnabled("donation");
   const canSeeContactDeveloper = isModuleEnabled("contact_developer");
@@ -535,7 +535,7 @@ export function Root() {
         </View>
       </View>
 
-      <LocalEmergencyAlerts key={user.id} token={token} userId={user.id} />
+      {hasAnyRole(["SAMU", "SAPEUR_POMPIER", "POLICE", "GENDARMERIE", "PROTECTION_CIVILE"]) ? <LocalEmergencyAlerts key={user.id} token={token} onNavigate={(kind) => setCurrentTab(kind === "security" ? "security_ops" : "alerts")} /> : null}
       {/* Full-screen menu overlay */}
       <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={() => setMenuOpen(false)}>
         <Pressable style={[styles.overlay, { paddingTop: insets.top, paddingBottom: insets.bottom }]} onPress={() => setMenuOpen(false)}>

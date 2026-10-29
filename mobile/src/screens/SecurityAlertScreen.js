@@ -114,6 +114,7 @@ export function SecurityAlertScreen() {
       if (perm.status !== "granted") throw new Error("Permission de localisation refusee.");
       const current = await Location.getCurrentPositionAsync({});
       setCoords({ lat: current.coords.latitude, lon: current.coords.longitude });
+      void Location.reverseGeocodeAsync(current.coords).then(places => setCoords(previous => previous?.lat === current.coords.latitude && previous?.lon === current.coords.longitude ? {...previous, city: places[0]?.city || ""} : previous)).catch(() => {});
     } catch (err) {
       setError(err.message);
     } finally {
@@ -162,7 +163,8 @@ export function SecurityAlertScreen() {
           phoneNumber:   phoneNumber.replace(/\D/g, ""),
           photos,
           latitude:      coords.lat,
-          longitude:     coords.lon
+          longitude:     coords.lon,
+          city: coords.city || ""
         }
       });
       setSuccess(result?.queued ? result.message || "Enregistree hors ligne." : "Alerte envoyee avec succes.");

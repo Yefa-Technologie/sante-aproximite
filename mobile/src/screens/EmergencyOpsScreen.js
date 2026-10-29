@@ -77,8 +77,8 @@ export function EmergencyOpsScreen() {
   async function loadItems({ silent = false } = {}) {
     if (!silent) setLoading(true);
     try {
-      // all=true : toutes les alertes visibles peu importe le service (SAMU + Pompiers)
-      const data = await apiFetch("/emergency-reports?all=true", { token });
+      // Le serveur filtre les signalements selon le service et la base affectée.
+      const data = await apiFetch("/emergency-reports", { token, cache: false, queueOffline: false });
       setItems(Array.isArray(data) ? data : []);
       if (!silent) setError("");
     } catch (err) {
@@ -106,7 +106,7 @@ export function EmergencyOpsScreen() {
     try {
       const position = await getCurrentPosition();
       await apiFetch(`/emergency-reports/${itemId}/acknowledge`, {
-        token, method: "POST",
+        token, method: "POST", queueOffline: false,
         body: { teamLatitude: position.latitude, teamLongitude: position.longitude }
       });
       await loadItems({ silent: true });
@@ -127,7 +127,7 @@ export function EmergencyOpsScreen() {
     try {
       const position = await getCurrentPosition();
       await apiFetch(`/emergency-reports/${itemId}/progress`, {
-        token, method: "PATCH",
+        token, method: "PATCH", queueOffline: false,
         body: {
           status,
           teamLatitude:  position.latitude,

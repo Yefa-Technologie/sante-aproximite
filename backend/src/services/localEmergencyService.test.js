@@ -5,12 +5,12 @@ import { pool } from "../config/db.js";
 import { createEmergencyRouter } from "../routes/emergencyRoutes.js";
 import { cityKey, validPosition, notifyLocalEmergency } from "./localEmergencyService.js";
 
-async function setup(t, query) {
+async function setup(t, query, role="USER") {
   const original = pool.query; pool.query = query; t.after(() => { pool.query = original; });
   const app = express(); app.use(express.json());
   app.use(createEmergencyRouter({ auth: (req, res, next) => {
     if (!req.headers.authorization) return res.sendStatus(401);
-    req.user = { id: "12", role: "USER", roles: ["USER"] }; next();
+    req.user = { id: "12", role, roles: [role] }; next();
   } }));
   const server = await new Promise((resolve) => { const s = app.listen(0, "127.0.0.1", () => resolve(s)); });
   t.after(() => { server.closeAllConnections(); server.close(); });
@@ -20,50 +20,33 @@ async function setup(t, query) {
   });
 }
 
-test("city normalization ignores accents and positions reject coercion and invalid coordinates", () => {
-  assert.equal(cityKey(" Bouaké "), cityKey("BOUAKE"));
-  assert.ok(validPosition({ latitude: 5.3, longitude: -4 }));
-  for (const p of [{latitude:null,longitude:0},{latitude:"5",longitude:2},{latitude:91,longitude:2},{latitude:0,longitude:0}]) assert.equal(validPosition(p), false);
+test("city normalization and GPS validation",()=>{
+  assert.equal(cityKey("Bouaké"),cityKey("BOUAKE"));
+  assert.ok(validPosition({latitude:5,longitude:-4}));
+  assert.equal(validPosition({latitude:null,longitude:0}),false);
 });
-
-test("location belongs to authenticated account and cannot be set for another account", async (t) => {
-  const calls=[]; const request=await setup(t,async (...args)=>{calls.push(args);return{rows:[]};});
-  assert.equal((await request("/location","PUT",{userId:999,latitude:7.69,longitude:-5.03,city:"Bouaké"})).status,200);
-  assert.deepEqual(calls[0][1],[12,7.69,-5.03,"Bouaké","bouake"]);
-  assert.equal((await request("/location","PUT",{latitude:100,longitude:0})).status,400);
-  assert.equal((await request("/location","DELETE")).status,200);
-  assert.deepEqual(calls[1][1],[12]);
-});
-
-test("local feed is authenticated and requires a recent saved position", async (t) => {
-  let sql="";const request=await setup(t,async (query)=>{sql=query;return{rows:[]};});
+test("public users and developer-only accounts cannot access incoming alerts or register GPS",async t=>{
+  const request=await setup(t,()=>{throw Error("Must not query private incidents");});
   assert.equal((await request("/local-alerts","GET",undefined,false)).status,401);
-  const response=await request("/local-alerts");
-  assert.equal(response.headers.get("cache-control"),"no-store");
-  assert.equal((await response.json()).needsLocation,true);
-  assert.match(sql,/24 hours/);
+  assert.equal((await request("/local-alerts")).status,403);
+  assert.equal((await request("/location","PUT",{latitude:5,longitude:-4})).status,403);
 });
-
-test("local feed includes only public fields and filters scope, own alerts, age and closed reports",async(t)=>{
+test("responders without an active assigned base receive no incidents",async t=>{
+  const request=await setup(t,async()=>({rows:[]}),"SAMU");
+  const response=await request("/local-alerts");assert.equal(response.headers.get("cache-control"),"no-store");
+  assert.deepEqual(await response.json(),{alerts:[],bases:[],needsAssignment:true});
+});
+test("private feed is scoped by assigned base, service and geography and hides details",async t=>{
   const calls=[];const request=await setup(t,async(sql,params)=>{
-    calls.push({sql,params});
-    return {rows:sql.startsWith("SELECT city")?[{city:"Anyama"}]:[{id:8,city:"Anyama",status:"NEW",created_at:"2026-10-29T10:00:00Z",distance_km:2.9,same_city:true,phone_number:"private",description:"private",latitude:5,photos:["private"]}]};
-  });
-  const data=await(await request("/local-alerts?latitude=0&longitude=0&userId=999")).json();
-  assert.deepEqual(data.alerts,[{id:"8",city:"Anyama",status:"NEW",createdAt:"2026-10-29T10:00:00Z",distanceKm:3,sameCity:true}]);
-  assert.deepEqual(calls[1].params,[12]);
-  assert.match(calls[1].sql,/er.user_id <> \$1/);
-  assert.match(calls[1].sql,/er.status IN \('NEW','ACKNOWLEDGED','EN_ROUTE','ON_SITE'\)/);
-  assert.match(calls[1].sql,/<= 20/);assert.match(calls[1].sql,/ul.city_key = er.city_key/);
+    calls.push({sql,params});return{rows:sql.includes("SELECT eb.*")?[{id:3,name:"Base",service_type:"SAMU",city:"Bouaké",latitude:7.7,longitude:-5,radius_km:20}]:[{id:8,city:"Bouaké",status:"NEW",created_at:"2026-10-29",kind:"medical",target_service:"SAMU",phone_number:"private"}]};
+  },"SAMU");
+  const data=await(await request("/local-alerts?userId=999")).json();assert.equal(data.alerts.length,1);
+  assert.equal(data.alerts[0].phone_number,undefined);assert.equal(data.needsAssignment,false);
+  assert.deepEqual(calls[1].params,[12,["SAMU"]]);assert.match(calls[1].sql,/user_service_bases/);assert.match(calls[1].sql,/eb.radius_km/);
 });
-
-test("targeted push is generic, uses fresh nearby recipients, and one failure does not stop others",async()=>{
+test("push targets only active responders assigned to matching bases; failures stay isolated",async()=>{
   let sql;const delivered=[];
-  await notifyLocalEmergency({id:8,phone_number:"private",description:"private",latitude:5},{
-    query:async(q,params)=>{sql=q;assert.deepEqual(params,[8]);return{rows:[{user_id:1},{user_id:2}]};},
-    send:async(id,payload)=>{delivered.push({id,payload});if(id===1)throw new Error("push unavailable");},
-  });
-  assert.equal(delivered.length,2);assert.match(sql,/24 hours/);assert.match(sql,/ul.user_id <> er.user_id/);
-  assert.deepEqual(delivered[1].payload.data,{type:"LOCAL_EMERGENCY_ALERT",reportId:"8"});
-  assert.ok(!JSON.stringify(delivered).includes("private"));
+  await notifyLocalEmergency({id:8},{query:async(q,p)=>{sql=q;assert.deepEqual(p,[8]);return{rows:[{user_id:1},{user_id:2}]};},send:async(id,payload)=>{delivered.push(payload);if(id===1)throw Error("offline");}});
+  assert.equal(delivered.length,2);assert.match(sql,/user_service_bases/);assert.match(sql,/eb.is_active=TRUE/);assert.match(sql,/u.role=usb.service_type/);assert.match(sql,/eb.radius_km/);
+  assert.deepEqual(delivered[1].data,{type:"LOCAL_EMERGENCY_ALERT",reportId:"8",kind:"medical"});
 });

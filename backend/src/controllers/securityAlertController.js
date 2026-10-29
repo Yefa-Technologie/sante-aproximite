@@ -1,23 +1,10 @@
+import { baseScopeSql, serviceRoles, SECURITY_ROLES, cityKey } from "../services/serviceBaseService.js";
+import { notifyLocalEmergency } from "../services/localEmergencyService.js";
 import { pool } from "../config/db.js";
 
 const VALID_ALERT_TYPES = ["AGRESSION", "ACCIDENT", "INCENDIE", "INTRUSION", "AUTRE"];
 const VALID_STATUSES = ["NEW", "ACKNOWLEDGED", "RESOLVED", "CLOSED"];
 const VALID_TARGET_SERVICES = ["POLICE", "GENDARMERIE", "PROTECTION_CIVILE"];
-
-// Roles autorisés à lire/traiter les alertes sécurité
-const SECURITY_HANDLER_ROLES = new Set([
-  "DEVELOPER",
-  "POLICE", "GENDARMERIE", "PROTECTION_CIVILE",
-  "REGULATOR", "NATIONAL", "REGION", "DISTRICT"
-]);
-
-// Chaque role opérationnel est lié à un service précis
-function serviceFromRole(role) {
-  if (role === "POLICE")            return "POLICE";
-  if (role === "GENDARMERIE")       return "GENDARMERIE";
-  if (role === "PROTECTION_CIVILE") return "PROTECTION_CIVILE";
-  return null; // admins (REGULATOR, NATIONAL…) voient tout
-}
 
 function normalizeText(raw, max = 500) {
   const value = String(raw || "").trim();
@@ -103,9 +90,9 @@ export async function createSecurityAlert(req, res) {
     `
       INSERT INTO security_alerts (
         user_id, target_service, alert_type, location_name, description,
-        phone_number, photos, latitude, longitude
+        phone_number, photos, latitude, longitude, city, city_key
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9)
+      VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11)
       RETURNING *;
     `,
     [
@@ -117,10 +104,11 @@ export async function createSecurityAlert(req, res) {
       phoneNumber,
       JSON.stringify(photos),
       latitude,
-      longitude
+      longitude, String(req.body?.city || "").trim().slice(0,100), cityKey(req.body?.city)
     ]
   );
 
+  void notifyLocalEmergency(result.rows[0], { kind: "security" }).catch(() => {});
   return res.status(201).json({
     message: "Alerte securite envoyee.",
     alert: normalizeAlertRow(result.rows[0])
@@ -128,12 +116,9 @@ export async function createSecurityAlert(req, res) {
 }
 
 export async function getAllSecurityAlerts(req, res) {
-  if (!SECURITY_HANDLER_ROLES.has(req.user?.role)) {
+  if (!serviceRoles(req.user, SECURITY_ROLES).length) {
     return res.status(403).json({ message: "Acces refuse." });
   }
-
-  const role        = String(req.user.role || "").toUpperCase();
-  const roleService = serviceFromRole(role);  // null pour les admins
 
   const statusFilter = VALID_STATUSES.includes(String(req.query?.status || "").toUpperCase())
     ? String(req.query.status).toUpperCase()
@@ -142,11 +127,7 @@ export async function getAllSecurityAlerts(req, res) {
   const params = [];
   const where  = [];
 
-  // Chaque service opérationnel ne voit que ses propres alertes
-  if (roleService) {
-    where.push(`sa.target_service = $${params.length + 1}`);
-    params.push(roleService);
-  }
+  where.push(baseScopeSql("sa", req.user, params, SECURITY_ROLES));
   if (statusFilter) {
     where.push(`sa.status = $${params.length + 1}`);
     params.push(statusFilter);
@@ -173,7 +154,7 @@ export async function getAllSecurityAlerts(req, res) {
 }
 
 export async function updateSecurityAlertStatus(req, res) {
-  if (!SECURITY_HANDLER_ROLES.has(req.user?.role)) {
+  if (!serviceRoles(req.user, SECURITY_ROLES).length) {
     return res.status(403).json({ message: "Acces refuse." });
   }
 
@@ -187,18 +168,8 @@ export async function updateSecurityAlertStatus(req, res) {
     return res.status(400).json({ message: "Statut invalide (ACKNOWLEDGED, RESOLVED ou CLOSED)." });
   }
 
-  const role        = String(req.user.role || "").toUpperCase();
-  const roleService = serviceFromRole(role);
-
-  // Un agent opérationnel ne peut traiter que les alertes de son service
-  // Les admins (roleService === null) peuvent traiter toutes les alertes
   const queryParams = [alertId, status, Number(req.user.id)];
-  let serviceCondition = "";
-  if (roleService) {
-    queryParams.push(roleService);
-    serviceCondition = `AND sa.target_service = $${queryParams.length}`;
-  }
-
+  const scope = baseScopeSql("sa", req.user, queryParams, SECURITY_ROLES);
   const updated = await pool.query(
     `
       UPDATE security_alerts sa
@@ -207,7 +178,7 @@ export async function updateSecurityAlertStatus(req, res) {
         handled_by = COALESCE(sa.handled_by, $3),
         handled_at = COALESCE(sa.handled_at, NOW())
       WHERE sa.id = $1
-        ${serviceCondition}
+        AND ${scope} AND (sa.handled_by IS NULL OR sa.handled_by=$3)
       RETURNING *;
     `,
     queryParams

@@ -235,7 +235,7 @@ export function EmergencyScreen() {
       <View style={styles.header}>
         <Text style={styles.title}>Signaler une urgence</Text>
         <Text style={styles.subtitle}>Votre signalement inclut le service, votre telephone, la position GPS et la description.</Text>
-        <Text style={styles.subtitle}>Une alerte générale sera visible aux comptes de votre ville ou à proximité. Votre téléphone, vos photos et votre description ne sont pas affichés dans ces alertes locales.</Text>
+        <Text style={styles.subtitle}>Votre signalement est transmis au service de secours choisi, dans la zone de ses bases habilitées. Vous seul pouvez consulter votre suivi personnel ; les autres utilisateurs ne voient pas votre signalement.</Text>
       </View>
 
       {/* Service selector */}

@@ -130,6 +130,9 @@ async function createSessionTokens(user) {
 
 export async function register(req, res) {
   const { fullName, email, password, role, establishmentCode, phoneNumber } = req.body;
+  if (String(role || "USER").trim().toUpperCase() !== "USER") {
+    return res.status(403).json({ message: "Les comptes professionnels sont créés par l’administration depuis le web avec leur affectation." });
+  }
 
   if (!fullName || !email || !password) {
     return res.status(400).json({ message: "fullName, email et password sont obligatoires" });

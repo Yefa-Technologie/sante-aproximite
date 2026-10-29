@@ -86,7 +86,7 @@ const PROFILE_NAV_ITEM: NavItem = { key: "profile", label: "Mon profil", icon: "
 
 export function getNavItems(user: User | null | undefined): NavItem[] {
   if (!user) return [];
-  return [...getRoleNavItems(user), PROFILE_NAV_ITEM];
+  return [...getRoleNavItems(user).filter(item => (item.key !== "emergency-alerts" || isEmergencyResponder(user)) && (item.key !== "security-alerts" || isSecurityResponder(user))), PROFILE_NAV_ITEM];
 }
 
 function getRoleNavItems(user: User): NavItem[] {
