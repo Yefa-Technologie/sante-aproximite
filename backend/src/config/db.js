@@ -1086,6 +1086,16 @@ export async function connectDb() {
   `);
   await pool.query("SELECT 1");
   await runMigrations();
+  await pool.query(`ALTER TABLE emergency_reports ADD COLUMN IF NOT EXISTS city TEXT NOT NULL DEFAULT '';
+    ALTER TABLE emergency_reports ADD COLUMN IF NOT EXISTS city_key TEXT NOT NULL DEFAULT '';
+    CREATE TABLE IF NOT EXISTS emergency_user_locations (
+      user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      latitude DOUBLE PRECISION NOT NULL CHECK (latitude BETWEEN -90 AND 90),
+      longitude DOUBLE PRECISION NOT NULL CHECK (longitude BETWEEN -180 AND 180),
+      city TEXT NOT NULL DEFAULT '', city_key TEXT NOT NULL DEFAULT '', updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_emergency_local_active ON emergency_reports(created_at)
+      WHERE status IN ('NEW','ACKNOWLEDGED','EN_ROUTE','ON_SITE');`);
   console.log("PostgreSQL connected");
 }
 

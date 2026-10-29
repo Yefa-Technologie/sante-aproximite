@@ -29,6 +29,7 @@ export async function sendPushNotificationToUser(userId, { title, body, data } =
   try {
     await fetch(EXPO_PUSH_URL, {
       method: "POST",
+      signal: AbortSignal.timeout(10000),
       headers: { "Content-Type": "application/json", Accept: "application/json" },
       body: JSON.stringify(messages),
     });

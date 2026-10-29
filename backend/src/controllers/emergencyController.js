@@ -1,4 +1,5 @@
 import { pool } from "../config/db.js";
+import { cityKey, notifyLocalEmergency } from "../services/localEmergencyService.js";
 
 const TARGET_SERVICE_MAP = {
   SAMU: "SAMU",
@@ -271,9 +272,9 @@ export async function createEmergencyReport(req, res) {
         phone_number,
         photos,
         latitude,
-        longitude
+        longitude, city, city_key
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9)
+      VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11)
       RETURNING *;
     `,
     [
@@ -285,10 +286,13 @@ export async function createEmergencyReport(req, res) {
       phoneNumber,
       JSON.stringify(photos),
       latitude,
-      longitude
+      longitude,
+      String(req.body?.city || "").trim().slice(0, 100),
+      cityKey(req.body?.city)
     ]
   );
 
+  void notifyLocalEmergency(result.rows[0]).catch(() => {});
   return res.status(201).json({
     message: "Signalement d'urgence envoye.",
     report: normalizeReportRow(result.rows[0])

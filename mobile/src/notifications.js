@@ -8,6 +8,23 @@ import { apiFetch } from "./api/client";
 // un console.error interne dans ce contexte : on evite donc de charger le module tant qu'on
 // n'est pas certain de ne pas etre dans Expo Go.
 const isExpoGo = Constants.appOwnership === "expo" || Constants.executionEnvironment === "storeClient";
+let lastLocalResponseId = null;
+
+export function subscribeLocalEmergencyNotifications(onOpen) {
+  if (isExpoGo) return () => {};
+  let active = true;
+  try {
+    const Notifications = require("expo-notifications");
+    const handle = (response) => {
+      const request = response?.notification?.request;
+      if (!active || request?.content?.data?.type !== "LOCAL_EMERGENCY_ALERT" || request.identifier === lastLocalResponseId) return;
+      lastLocalResponseId = request.identifier; onOpen();
+    };
+    const sub = Notifications.addNotificationResponseReceivedListener(handle);
+    Notifications.getLastNotificationResponseAsync().then(handle).catch(() => {});
+    return () => { active = false; sub.remove(); };
+  } catch { return () => { active = false; }; }
+}
 
 export async function registerForPushNotifications(token) {
   if (!token || !Device.isDevice || isExpoGo) return;

@@ -10,6 +10,7 @@ import {
   updateEmergencyProgress
 } from "../controllers/emergencyController.js";
 import { requireAuth, requireRole } from "../middlewares/authMiddleware.js";
+import { saveEmergencyLocation, removeEmergencyLocation, getLocalEmergencyAlerts } from "../services/localEmergencyService.js";
 
 export function createEmergencyRouter({ auth = requireAuth } = {}) {
   const router = Router();
@@ -22,6 +23,9 @@ export function createEmergencyRouter({ auth = requireAuth } = {}) {
   router.post("/", auth, createEmergencyReport);
   router.get("/", auth, requireRole(EMERGENCY_ROLES), getEmergencyReports);
   router.get("/mine", auth, getMyEmergencyReports);
+  router.put("/location", auth, saveEmergencyLocation);
+  router.delete("/location", auth, removeEmergencyLocation);
+  router.get("/local-alerts", auth, getLocalEmergencyAlerts);
   router.post("/:id/acknowledge", auth, requireRole(EMERGENCY_ROLES), acknowledgeEmergencyReport);
   router.patch("/:id/progress", auth, requireRole(EMERGENCY_ROLES), updateEmergencyProgress);
   router.post("/bases", auth, requireRole(EMERGENCY_ROLES), createEmergencyBase);

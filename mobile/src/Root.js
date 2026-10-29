@@ -10,6 +10,7 @@ import { ProjectDigitalizationModal } from "./components/ProjectDigitalizationMo
 import { DonationModal } from "./components/DonationModal";
 import { fetchModuleSettings, loadCachedModuleSettings } from "./storage/moduleSettings";
 import { registerForPushNotifications } from "./notifications";
+import { LocalEmergencyAlerts } from "./components/LocalEmergencyAlerts";
 
 const APP_VERSION = "1.0.0";
 
@@ -534,6 +535,7 @@ export function Root() {
         </View>
       </View>
 
+      <LocalEmergencyAlerts key={user.id} token={token} userId={user.id} />
       {/* Full-screen menu overlay */}
       <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={() => setMenuOpen(false)}>
         <Pressable style={[styles.overlay, { paddingTop: insets.top, paddingBottom: insets.bottom }]} onPress={() => setMenuOpen(false)}>

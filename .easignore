@@ -1,0 +1,50 @@
+# Dependencies
+**/node_modules/
+**/.npm-cache/
+
+# Logs
+**/npm-debug.log*
+**/yarn-debug.log*
+**/yarn-error.log*
+**/*.log
+
+# Environment files
+**/.env
+**/.env.*
+!**/.env.example
+
+# Build outputs
+**/dist/
+**/build/
+**/.expo/
+**/android/app/build/
+**/ios/build/
+**/.gradle-home/
+**/dist.tar.gz
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Temporary
+*.tmp
+*.swp
+~$*
+
+# Local git backup folders
+**/.git_backup_mono/
+
+# APK generes par scripts/build-apk.ps1
+/apk/
+*.apk
+
+# Fichiers locaux sans utilite pour la compilation mobile
+/docs/
+/scripts/
+/.aws/
+/.codex/
+/.agents/
+/.claude/
+

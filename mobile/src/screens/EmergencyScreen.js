@@ -87,6 +87,9 @@ export function EmergencyScreen() {
         throw new Error(`Precision GPS trop faible (${Math.round(accuracyMeters)} m). Rapprochez-vous d'une zone ouverte.`);
       }
       setCoords({ latitude: current.coords.latitude, longitude: current.coords.longitude, accuracyMeters });
+      Location.reverseGeocodeAsync({ latitude: current.coords.latitude, longitude: current.coords.longitude })
+        .then((places) => setCoords((previous) => previous?.latitude === current.coords.latitude && previous?.longitude === current.coords.longitude
+          ? { ...previous, city: places[0]?.city || "" } : previous)).catch(() => {});
     } catch (err) {
       setError(err.message || "Impossible de recuperer la position GPS");
     } finally {
@@ -144,7 +147,8 @@ export function EmergencyScreen() {
           description: description.trim(),
           photos,
           latitude: coords.latitude,
-          longitude: coords.longitude
+          longitude: coords.longitude,
+          city: coords.city || ""
         }
       });
       if (result?.queued) {
@@ -231,6 +235,7 @@ export function EmergencyScreen() {
       <View style={styles.header}>
         <Text style={styles.title}>Signaler une urgence</Text>
         <Text style={styles.subtitle}>Votre signalement inclut le service, votre telephone, la position GPS et la description.</Text>
+        <Text style={styles.subtitle}>Une alerte générale sera visible aux comptes de votre ville ou à proximité. Votre téléphone, vos photos et votre description ne sont pas affichés dans ces alertes locales.</Text>
       </View>
 
       {/* Service selector */}

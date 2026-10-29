@@ -260,14 +260,14 @@ export async function syncPendingRequests() {
   return queue.length - remaining.length;
 }
 
-export async function apiFetch(path, { token, method = "GET", body, timeoutMs = 15000, queueOffline = true } = {}) {
+export async function apiFetch(path, { token, method = "GET", body, timeoutMs = 15000, queueOffline = true, cache = true } = {}) {
   const normalizedMethod = String(method || "GET").toUpperCase();
   const persistedToken = token ? await AsyncStorage.getItem(TOKEN_KEY) : "";
   const effectiveToken = persistedToken || token;
 
   try {
     const data = await requestApi(path, { token: effectiveToken, method: normalizedMethod, body, timeoutMs });
-    if (normalizedMethod === "GET") {
+    if (cache && normalizedMethod === "GET") {
       await saveCached(path, effectiveToken, data);
     }
     return data;
@@ -287,7 +287,7 @@ export async function apiFetch(path, { token, method = "GET", body, timeoutMs = 
             if (retryError?.status === 401) await expireSession(renewedToken);
             throw retryError;
           }
-          if (normalizedMethod === "GET") {
+          if (cache && normalizedMethod === "GET") {
             await saveCached(path, renewedToken, retried);
           }
           return retried;
@@ -299,7 +299,7 @@ export async function apiFetch(path, { token, method = "GET", body, timeoutMs = 
       }
     }
 
-    if (normalizedMethod === "GET" && isNetworkFailure(error)) {
+    if (cache && normalizedMethod === "GET" && isNetworkFailure(error)) {
       const cached = await loadCached(path, effectiveToken);
       if (cached !== null) return cached;
     }

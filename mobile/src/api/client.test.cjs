@@ -49,3 +49,9 @@ test('a renewed token rejected again also returns to login', async()=>{
   await assert.rejects(app.apiFetch('/centers',{token:'expired'}));
   assert.equal(app.storage.has(TOKEN),false); assert.equal(app.events.at(-1).expired,true);
 });
+
+test('live emergency alerts never fall back to an outdated cached result', async()=>{
+  const app=setup([new Error('Network request failed')]);
+  app.storage.set('sante_aproxmite_cache_expired_%2Femergency-reports%2Flocal-alerts',JSON.stringify({savedAt:Date.now(),data:{alerts:[{id:'old'}]}}));
+  await assert.rejects(app.apiFetch('/emergency-reports/local-alerts',{token:'expired',cache:false,queueOffline:false}));
+});

@@ -200,3 +200,10 @@ npm run ios
 Notes:
 - Sur Android, acceptez la permission de localisation au premier lancement.
 - Si vous testez sur un telephone physique, remplacez `EXPO_PUBLIC_API_URL` par l'IP locale de votre machine (ex: `http://192.168.1.20:5000/api`).
+
+### Alertes sanitaires locales (mobile)
+Les comptes peuvent activer « Alertes sanitaires de proximité » dans le bandeau mobile. La position est actualisée au premier plan toutes les cinq minutes, la liste toutes les trente secondes. Le serveur utilise la même ville (normalisation des accents et de la casse) ou une distance GPS inférieure ou égale à 20 km, avec une position datant de moins de 24 heures. La ville provient du géocodage du mobile ; en son absence, seule la distance s’applique. Une désactivation supprime la localisation enregistrée. Aucun suivi de position en arrière-plan n’est ajouté.
+
+Seules les alertes actives de moins de 24 heures sont visibles ; les propres signalements du destinataire sont exclus de cette liste et restent dans « Suivi de mes alertes ». La liste publique contient uniquement l’identifiant, la ville, le statut, la date et une distance arrondie. Le téléphone, les photos, la description et les coordonnées précises ne sont pas exposés. La consultation exige Internet et ne réutilise pas le cache de résultats. Les opérations de secours conservent leurs restrictions de rôle.
+
+API authentifiée : `PUT /api/emergency-reports/location`, `DELETE /api/emergency-reports/location`, `GET /api/emergency-reports/local-alerts`. La sélection est imposée par le serveur à partir de la position du compte, pas des paramètres de consultation. Migration automatique : `emergency_user_locations` et colonnes `city` / `city_key` des signalements. Un push générique est préparé pour les destinataires concernés via le service Expo existant ; sa livraison nécessite des jetons Expo valides et la configuration FCM/APNs du build. L’affichage dans l’application fonctionne indépendamment de cette livraison. Les tests n’envoient aucun signalement réel ni notification réelle.
