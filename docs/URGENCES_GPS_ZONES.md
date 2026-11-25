@@ -79,3 +79,14 @@ node --test src/services/incidentIntegration.test.js
 Le test d’intégration refuse une base distante et utilise exclusivement des tables temporaires sur une connexion locale ; il applique d’abord les migrations locales. Aucun vrai signalement, périmètre opérationnel, compte ou push n’est créé par ses scénarios. Les notifications y sont simulées. Il couvre la validation GPS, les routes historiques, Bouaké/Korhogo **FICTIFS**, les accès directs croisés, cartes/photos/stats/exports, file de coordination, droits, historique, renfort, révocation, transfert, idempotence, protection contre les répétitions et doublons probables.
 
 Depuis `mobile` : `node --test src/utils/*.test.cjs src/api/*.test.cjs src/audio/*.test.cjs`. Depuis `frontend` : `node --test lib/api-client.test.cjs` (export et expiration de session). Compiler aussi le JavaScript mobile avec Babel/Metro et construire le web avec `npm run build` depuis `frontend`. Compléter sur téléphone réel : permission refusée, GPS désactivé/imprécis, nouveau relevé avant envoi et réception effective d’un push signé en production.
+
+
+### Sélection des territoires sur la carte
+
+Dans Paramètres → Bases de secours et sécurité, cliquer sur « Sélectionner les zones d’intervention ». Choisir le niveau Départements ou Régions et districts autonomes, puis cliquer sur les territoires à couvrir. Un second clic retire le territoire. La liste des territoires sélectionnés permet aussi de les retirer individuellement.
+
+Choisir une base active, confirmer sa responsabilité sur ces territoires, puis enregistrer. Jusqu’à 25 territoires peuvent être sélectionnés. Un territoire constitué de plusieurs polygones est enregistré en plusieurs zones pour conserver toutes ses parties. Les zones déjà configurées sont conservées ; aucune affectation historique n’est recalculée.
+
+POST /api/incidents/zones/selection, réservé aux administrateurs des bases : {baseId,isTest,zones:[{name,geometry:GeoJSONPolygon}]}. Tous les contours sont validés avant écriture et sauvegardés dans une transaction unique (50 contours maximum). Les répétitions du même contour actif pour la même base et le même type réel/test réutilisent la zone existante. Une base inactive ou non approuvée est refusée. Les règles existantes continuent à traiter les chevauchements entre bases du même service en « À affecter ».
+
+Vérifications : test PostgreSQL/HTTP avec données FICTIVES exclusivement dans des tables temporaires, refus sans droit, validation des contours, rejet d’une base inactive, absence de doublons au réessai, annulation complète sur échec SQL et routage d’un nouvel incident avec cloisonnement entre bases. Vérification navigateur de la sélection multiple, de la confirmation obligatoire et d’un territoire à plusieurs parties, avec API simulées.

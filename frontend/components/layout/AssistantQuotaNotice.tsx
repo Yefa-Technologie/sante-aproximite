@@ -37,7 +37,7 @@ export function AssistantQuotaNotice() {
   return (
     <details className="border-t border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950 sm:px-6">
       <summary className="cursor-pointer font-semibold" role="status">
-        Assistant IA : dépassement de quota Gemini signalé — {result.alerts.length} incident(s) dans les dernières 24 heures
+        Assistant IA : dépassement de quota Gemini signalé - {result.alerts.length} incident(s) dans les dernières 24 heures
       </summary>
       <p className="mt-2 text-xs">Vérifiez les quotas dans Google AI Studio. Les utilisateurs mobiles voient uniquement un message d’indisponibilité.</p>
       <ul className="mt-2 space-y-2">

@@ -67,3 +67,31 @@ export async function writeZone(req,res) {
     await db.query("COMMIT");res.status(req.params.id?200:201).json(r.rows[0]);
   }catch(e){await db.query("ROLLBACK");throw e;}finally{db.release();}
 }
+
+// A map selection is saved atomically: either all polygon parts are stored or none.
+export async function createSelectedZones(req,res) {
+  if(!canManageBases(req.user)) throw fail("Gestion des zones réservée à l’administration.",403);
+  const b=req.body||{},baseId=Number(b.baseId);
+  if(!Number.isSafeInteger(baseId)||baseId<=0||typeof b.isTest!=="boolean"||!Array.isArray(b.zones)||!b.zones.length||b.zones.length>50) throw fail("Sélection de zones invalide (50 contours maximum).");
+  const zones=b.zones.map(z=>{
+    const name=String(z?.name||"").trim().slice(0,160);
+    if(!name || (b.isTest&&!/ficti|test/i.test(name))) throw fail("Chaque zone doit avoir un nom ; une zone fictive doit porter TEST ou FICTIF.");
+    try{validatePolygon(z.geometry);}catch(e){throw fail(e.message);}
+    return {name,geometry:z.geometry};
+  });
+  const db=await pool.connect();
+  try {
+    await db.query("BEGIN");
+    const base=await db.query("SELECT id FROM emergency_bases WHERE id=$1 AND is_active=TRUE AND approval_status='APPROVED' FOR UPDATE",[baseId]);
+    if(!base.rows.length) throw fail("Choisissez une base active et approuvée.");
+    const saved=[];
+    for(const z of zones) {
+      const geometry=JSON.stringify(z.geometry);
+      const existing=await db.query("SELECT * FROM emergency_zones WHERE base_id=$1 AND geometry=$2::jsonb AND is_active=TRUE AND is_test=$3 ORDER BY id LIMIT 1",[baseId,geometry,b.isTest]);
+      if(existing.rows.length){saved.push(existing.rows[0]);continue;}
+      const r=await db.query("INSERT INTO emergency_zones(base_id,name,geometry,is_active,is_test,updated_by) VALUES($1,$2,$3,TRUE,$4,$5) RETURNING *",[baseId,z.name,geometry,b.isTest,Number(req.user.id)]);
+      saved.push(r.rows[0]);
+    }
+    await db.query("COMMIT");res.status(201).json({zones:saved});
+  }catch(e){await db.query("ROLLBACK");throw e;}finally{db.release();}
+}

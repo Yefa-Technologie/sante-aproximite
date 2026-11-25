@@ -170,6 +170,27 @@ test("incidents: PostgreSQL + HTTP authorization, routing, history, outbox and t
     await json(await request(`/incidents/zones/${configured.id}`,999,"PUT",{...zone,isActive:false}),200);
   });
 
+  await t.test("map selection: admin only, validation, atomic save, retry deduplication and inactive base rejection",async()=>{
+    const payload={baseId:11,isTest:true,zones:[{name:"TEST FICTIF sélection A",geometry:square(-2,9)},{name:"TEST FICTIF sélection B",geometry:square(-2.2,9)}]};
+    await json(await request("/incidents/zones/selection",100,"POST",payload),403);
+    assert.equal((await request("/incidents/zones/selection",null,"POST",payload)).status,401);
+    await json(await request("/incidents/zones/selection",999,"POST",{...payload,zones:[payload.zones[0],{name:"TEST FICTIF invalide",geometry:{type:"Polygon",coordinates:[]}}]}),400);
+    assert.equal((await db.query("SELECT count(*)::int AS n FROM emergency_zones WHERE name LIKE 'TEST FICTIF sélection%' ")).rows[0].n,0);
+    await json(await request("/incidents/zones/selection",999,"POST",{...payload,baseId:13}),400);
+    const saved=await json(await request("/incidents/zones/selection",999,"POST",payload),201);
+    assert.equal(saved.zones.length,2);assert.ok(saved.zones.every(z=>String(z.base_id)==="11"&&z.is_test&&z.is_active));
+    const replay=await json(await request("/incidents/zones/selection",999,"POST",payload),201);
+    assert.deepEqual(replay.zones.map(z=>z.id),saved.zones.map(z=>z.id));
+    const routed=(await json(await request("/emergency-reports",1001,"POST",body({longitude:-2,latitude:9})),201)).report;
+    assert.equal(routed.assignedBaseId,"11");
+    await json(await request(`/incidents/medical/${routed.id}`,202),404);
+    await db.query("ALTER TABLE emergency_zones ADD CONSTRAINT fixture_map_fail CHECK(name <> 'TEST FICTIF échec transaction')");
+    try{
+      await json(await request("/incidents/zones/selection",999,"POST",{...payload,zones:[{name:"TEST FICTIF rollback sélection",geometry:square(-2.4,9)},{name:"TEST FICTIF échec transaction",geometry:square(-2.6,9)}]}),500);
+      assert.equal((await db.query("SELECT count(*)::int AS n FROM emergency_zones WHERE name='TEST FICTIF rollback sélection'")).rows[0].n,0);
+    }finally{await db.query("ALTER TABLE emergency_zones DROP CONSTRAINT fixture_map_fail");}
+  });
+
   await t.test("production routing never uses test-only fictitious polygons",async()=>{
     process.env.NODE_ENV="production";
     try {
